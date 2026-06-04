@@ -43,8 +43,8 @@ pub struct MetricsSnapshot {
 impl MetricsSnapshot {
     pub fn default(tentacle_id: String, service: String) -> MetricsSnapshot {
         MetricsSnapshot {
-            tentacle_id: tentacle_id,
-            service: service,
+            tentacle_id,
+            service,
             timestamp_ms: 0,
             active_connections: 0,
             connection_attempts_delta: 0,
@@ -228,9 +228,9 @@ impl MetricsManager {
         frame.push(0xBE); // Magic
         frame.push(0x01); // Version
         frame.extend_from_slice(&(payload_buf.len() as u32).to_be_bytes()); // Length
-        frame.extend_from_slice(&payload_buf);
+        frame.extend_from_slice(payload_buf);
 
-        let checksum = X25.checksum(&frame); // CRC16
+        let checksum = X25.checksum(frame); // CRC16
         frame.extend_from_slice(&checksum.to_be_bytes());
     }
 }
