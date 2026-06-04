@@ -1,9 +1,11 @@
 use crate::config::Config;
 use crate::metrics::MetricsManager;
+use crate::metrics::MetricsSnapshot;
 use crate::tracked_stream::TrackedStream;
 use anyhow::Context;
 use anyhow::Result;
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::copy_bidirectional;
@@ -23,10 +25,7 @@ pub struct Relay {
 impl Relay {
     pub fn new(cfg: Config) -> Self {
         let max_conn = cfg.max_connections;
-        let metrics = Arc::new(MetricsManager::new(
-            "tentacle-1".to_string(), // Should be configured or derived
-            cfg.service_name.clone(),
-        ));
+        let metrics = Arc::new(MetricsManager::new());
         Self {
             cfg: Arc::new(cfg),
             pool: Arc::new(Semaphore::new(max_conn)),
@@ -36,33 +35,53 @@ impl Relay {
 
     fn spawn_reporter(&self) {
         let metrics = self.metrics.clone();
-        let socket_path = "/var/run/nautrouds/services/metrics.sock".to_string();
+
+        let tentacle_id = self
+            .cfg
+            .socket_name
+            .strip_suffix(".sock")
+            .unwrap_or(&self.cfg.socket_name)
+            .to_string();
+        let service_name = self.cfg.service_name.clone();
+        let socket_path = PathBuf::from(&self.cfg.base_dir).join("metrics.sock");
         let mut metrics_interval = interval(Duration::from_secs(self.cfg.metrics_interval_secs));
 
         tokio::spawn(async move {
+            let mut snap = MetricsSnapshot::default(tentacle_id, service_name);
+            let mut buf = Vec::new();
+            let mut frame = Vec::new();
             loop {
                 metrics_interval.tick().await;
 
-                if let Err(e) = Self::push_metrics_once(&metrics, &socket_path).await {
+                if let Err(e) =
+                    Self::push_metrics_once(&metrics, &socket_path, &mut snap, &mut buf, &mut frame)
+                        .await
+                {
                     debug!(error = ?e, "metrics push skipped or failed, data will accumulate");
                 }
             }
         });
     }
 
-    async fn push_metrics_once(metrics: &Arc<MetricsManager>, path: &str) -> Result<()> {
-        let snap = metrics.take_snapshot();
-        let data = MetricsManager::encode_to_binary(&snap);
+    async fn push_metrics_once(
+        metrics: &Arc<MetricsManager>,
+        path: &Path,
+        snap: &mut MetricsSnapshot,
+        buf: &mut Vec<u8>,
+        frame: &mut Vec<u8>,
+    ) -> Result<()> {
+        metrics.take_snapshot(snap);
+        MetricsManager::encode_to_binary(snap, buf, frame);
 
         match UnixStream::connect(path).await {
             Ok(mut stream) => {
                 use tokio::io::AsyncWriteExt;
                 stream
-                    .write_all(&data)
+                    .write_all(frame)
                     .await
                     .context("failed to write to metrics socket")?;
 
-                metrics.commit_sent_metrics(&snap);
+                metrics.commit_sent_metrics(snap);
                 debug!("metrics successfully pushed to nautrouds");
                 Ok(())
             }

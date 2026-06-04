@@ -21,9 +21,6 @@ fn init_atomic_buckets() -> [AtomicU64; BUCKET_COUNT] {
 }
 
 pub struct MetricsManager {
-    tentacle_id: String,
-    service: String,
-
     active_connections: AtomicU64,
     connection_attempts_total: AtomicU64,
     connection_failures_total: AtomicU64,
@@ -43,11 +40,24 @@ pub struct MetricsSnapshot {
     pub transport_latency_seconds: [u64; BUCKET_COUNT],
 }
 
+impl MetricsSnapshot {
+    pub fn default(tentacle_id: String, service: String) -> MetricsSnapshot {
+        MetricsSnapshot {
+            tentacle_id: tentacle_id,
+            service: service,
+            timestamp_ms: 0,
+            active_connections: 0,
+            connection_attempts_delta: 0,
+            connection_failures_delta: 0,
+            bytes_transmitted_delta: 0,
+            transport_latency_seconds: [0u64; BUCKET_COUNT],
+        }
+    }
+}
+
 impl MetricsManager {
-    pub fn new(tentacle_id: String, service: String) -> Self {
+    pub fn new() -> Self {
         Self {
-            tentacle_id,
-            service,
             active_connections: AtomicU64::new(0),
             connection_attempts_total: AtomicU64::new(0),
             connection_failures_total: AtomicU64::new(0),
@@ -89,7 +99,7 @@ impl MetricsManager {
         }
     }
 
-    pub fn take_snapshot(&self) -> MetricsSnapshot {
+    pub fn take_snapshot(&self, snapshot: &mut MetricsSnapshot) {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -104,16 +114,12 @@ impl MetricsManager {
             *dest = src.load(Ordering::Relaxed);
         }
 
-        MetricsSnapshot {
-            tentacle_id: self.tentacle_id.clone(),
-            service: self.service.clone(),
-            timestamp_ms: timestamp,
-            active_connections: self.active_connections.load(Ordering::Relaxed),
-            connection_attempts_delta: self.connection_attempts_total.load(Ordering::Relaxed),
-            connection_failures_delta: self.connection_failures_total.load(Ordering::Relaxed),
-            bytes_transmitted_delta: self.bytes_transmitted_total.load(Ordering::Relaxed),
-            transport_latency_seconds,
-        }
+        snapshot.timestamp_ms = timestamp;
+        snapshot.active_connections = self.active_connections.load(Ordering::Relaxed);
+        snapshot.connection_attempts_delta = self.connection_attempts_total.load(Ordering::Relaxed);
+        snapshot.connection_failures_delta = self.connection_failures_total.load(Ordering::Relaxed);
+        snapshot.bytes_transmitted_delta = self.bytes_transmitted_total.load(Ordering::Relaxed);
+        snapshot.transport_latency_seconds = transport_latency_seconds;
     }
 
     pub fn commit_sent_metrics(&self, snapshot: &MetricsSnapshot) {
@@ -143,8 +149,15 @@ impl MetricsManager {
         }
     }
 
-    pub fn encode_to_binary(snapshot: &MetricsSnapshot) -> Vec<u8> {
-        let mut payload_metrics = Vec::new();
+    pub fn encode_to_binary(
+        snapshot: &MetricsSnapshot,
+        payload_buf: &mut Vec<u8>,
+        frame: &mut Vec<u8>,
+    ) {
+        payload_buf.clear();
+        frame.clear();
+
+        let mut payload_metrics = Vec::with_capacity(5);
 
         let build_pb_buckets = |counts: &[u64; BUCKET_COUNT]| -> Vec<Bucket> {
             let mut pb_buckets = Vec::with_capacity(BUCKET_COUNT);
@@ -209,18 +222,15 @@ impl MetricsManager {
             metrics: payload_metrics,
         };
 
-        let mut buf = Vec::new();
-        payload.encode(&mut buf).unwrap();
+        payload.encode(payload_buf).unwrap();
 
-        let mut frame = Vec::with_capacity(6 + buf.len() + 2);
+        frame.reserve(6 + payload_buf.len() + 2);
         frame.push(0xBE); // Magic
         frame.push(0x01); // Version
-        frame.extend_from_slice(&(buf.len() as u32).to_be_bytes()); // Length
-        frame.extend_from_slice(&buf);
+        frame.extend_from_slice(&(payload_buf.len() as u32).to_be_bytes()); // Length
+        frame.extend_from_slice(&payload_buf);
 
         let checksum = X25.checksum(&frame); // CRC16
         frame.extend_from_slice(&checksum.to_be_bytes());
-
-        frame
     }
 }
