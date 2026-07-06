@@ -94,7 +94,7 @@ impl MetricsManager {
             .iter()
             .position(|&le| duration <= le)
             .unwrap_or(BUCKET_BOUNDARIES_US.len());
-        for bucket in buckets.iter().take(idx + 1) {
+        for bucket in buckets.iter().skip(idx) {
             bucket.fetch_add(1, Ordering::Relaxed);
         }
     }
