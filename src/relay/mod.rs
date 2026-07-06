@@ -229,13 +229,13 @@ async fn run_uds_listener(
                             let _permit = permit;
                             let start = std::time::Instant::now();
                             metrics.add_active_connection();
+                            metrics.add_attempts_total();
 
                             match TcpStream::connect(&target_addr).await {
                                 Ok(mut tcp_stream) => {
                                     let mut tracked_uds_stream = TrackedStream::new(uds_stream, metrics.clone());
 
                                     debug!(target = %target_addr, "relaying stream");
-                                    metrics.add_attempts_total();
                                     let latency_us = start.elapsed().as_micros() as u64;
                                     MetricsManager::observe_duration(&metrics.transport_latency_seconds, latency_us);
 
