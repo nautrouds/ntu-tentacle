@@ -3,12 +3,6 @@ name: ntu-tentacle CI
 on:
   push:
     branches: [ main, dev ]
-    paths:
-      - 'src/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'docker/**'
-      - '.github/workflows/ci.yml'
   pull_request:
     branches: [ main ]
     paths:
@@ -17,6 +11,7 @@ on:
       - 'Cargo.lock'
       - 'docker/**'
       - '.github/workflows/ci.yml'
+  workflow_dispatch: {}
 
 jobs:
   rust-tests:
