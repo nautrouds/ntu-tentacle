@@ -39,58 +39,58 @@ jobs:
       - name: Run Tests
         run: cargo test
 
-  release-please:
-    name: Release Please
+  detect-changes:
+    name: Detect Version Changes
     runs-on: ubuntu-latest
     needs: [rust-tests]
     if: >-
       github.repository == 'nautrouds/ntu-tentacle' &&
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main'
-    permissions:
-      contents: write
-      pull-requests: write
-      issues: write
     outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
-      major_minor_tag: ${{ steps.major-minor.outputs.tag }}
+      version: ${{ steps.diff.outputs.version }}
+      version_changed: ${{ steps.diff.outputs.version_changed }}
+      min_core_ref: ${{ steps.diff.outputs.min_core_ref }}
+      min_core_ref_changed: ${{ steps.diff.outputs.min_core_ref_changed }}
     steps:
-      - name: Release Please
-        id: release
-        uses: googleapis/release-please-action@v4
-        with:
-          release-type: rust
-
       - uses: actions/checkout@v4
-        if: steps.release.outputs.release_created == 'true'
+        with:
+          fetch-depth: 2
 
-      - name: Compute major.minor tag
-        id: major-minor
-        if: steps.release.outputs.release_created == 'true'
+      - name: Diff Cargo.toml against previous commit
+        id: diff
         run: |
-          TAG="${{ steps.release.outputs.tag_name }}"
-          echo "tag=${TAG%.*}" >> "$GITHUB_OUTPUT"
+          NEW_VERSION=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')
+          NEW_MIN_CORE_REF=$(grep -m1 'min_core_ref' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')
+          OLD_VERSION=""
+          OLD_MIN_CORE_REF=""
+          if git cat-file -e HEAD~1:Cargo.toml 2>/dev/null; then
+            OLD_VERSION=$(git show HEAD~1:Cargo.toml | grep -m1 '^version' | sed -E 's/.*"(.*)".*/\1/')
+            OLD_MIN_CORE_REF=$(git show HEAD~1:Cargo.toml | grep -m1 'min_core_ref' | sed -E 's/.*"(.*)".*/\1/')
+          fi
 
-      - name: Add Nautrouds compatibility note to release
-        if: steps.release.outputs.release_created == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG="${{ steps.release.outputs.tag_name }}"
-          MIN_CORE_REF=$(grep -m1 'min_core_ref' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')
-          NOTES=$(gh release view "$TAG" --json body -q .body)
-          printf '**Minimum compatible Nautrouds: `%s`**\n\n%s' "$MIN_CORE_REF" "$NOTES" > /tmp/release-notes.md
-          gh release edit "$TAG" --notes-file /tmp/release-notes.md
+          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "min_core_ref=$NEW_MIN_CORE_REF" >> "$GITHUB_OUTPUT"
+          if [ "$NEW_VERSION" != "$OLD_VERSION" ]; then
+            echo "version_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "version_changed=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [ "$NEW_MIN_CORE_REF" != "$OLD_MIN_CORE_REF" ]; then
+            echo "min_core_ref_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "min_core_ref_changed=false" >> "$GITHUB_OUTPUT"
+          fi
 
   publish-ghcr:
     name: Publish Image to GHCR
     runs-on: ubuntu-latest
-    needs: [rust-tests, release-please]
+    needs: [rust-tests, detect-changes]
     if: >-
       github.repository == 'nautrouds/ntu-tentacle' &&
       github.event_name == 'push' &&
-      github.ref == 'refs/heads/main'
+      github.ref == 'refs/heads/main' &&
+      needs.detect-changes.outputs.version_changed == 'true'
     permissions:
       contents: read
       packages: write
@@ -114,8 +114,7 @@ jobs:
           images: ghcr.io/${{ github.repository }}
           tags: |
             type=raw,value=latest
-            type=raw,value=${{ needs.release-please.outputs.tag_name }},enable=${{ needs.release-please.outputs.release_created == 'true' }}
-            type=raw,value=${{ needs.release-please.outputs.major_minor_tag }},enable=${{ needs.release-please.outputs.release_created == 'true' }}
+            type=raw,value=${{ needs.detect-changes.outputs.version }}
 
       - name: Build and Push Tantacle
         uses: docker/build-push-action@v5
@@ -128,3 +127,28 @@ jobs:
           labels: ${{ steps.meta-tantacle.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [rust-tests, detect-changes]
+    if: >-
+      github.repository == 'nautrouds/ntu-tentacle' &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.detect-changes.outputs.min_core_ref_changed == 'true'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create tag and release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.detect-changes.outputs.version }}
+          MIN_CORE_REF: ${{ needs.detect-changes.outputs.min_core_ref }}
+        run: |
+          TAG="v${VERSION}"
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes "**Minimum compatible Nautrouds: \`${MIN_CORE_REF}\`**"
