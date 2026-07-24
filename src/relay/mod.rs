@@ -5,7 +5,7 @@ use crate::tracked_stream::TrackedStream;
 use anyhow::Context;
 use anyhow::Result;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::copy_bidirectional;
@@ -36,18 +36,13 @@ impl Relay {
     fn spawn_reporter(&self) {
         let metrics = self.metrics.clone();
 
-        let tentacle_id = self
-            .cfg
-            .socket_name
-            .strip_suffix(".sock")
-            .unwrap_or(&self.cfg.socket_name)
-            .to_string();
-        let service_name = self.cfg.service_name.clone();
-        let socket_path = PathBuf::from(&self.cfg.base_dir).join("metrics.sock");
+        let socket_id = self.cfg.socket_id();
+        let service_name = self.cfg.service_name.to_string();
+        let socket_path = self.cfg.base_dir.join("metrics.sock");
         let mut metrics_interval = interval(Duration::from_secs(self.cfg.metrics_interval_secs));
 
         tokio::spawn(async move {
-            let mut snap = MetricsSnapshot::default(tentacle_id, service_name);
+            let mut snap = MetricsSnapshot::default(socket_id, service_name);
             let mut buf = Vec::new();
             let mut frame = Vec::new();
             loop {

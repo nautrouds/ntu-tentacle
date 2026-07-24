@@ -1,92 +1,126 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    pub service_name: String,
+    pub service_name: Arc<str>,
     pub target_addr: String,
-    pub socket_name: String,
-    pub base_dir: PathBuf,
+    pub base_dir: Arc<Path>,
     pub max_connections: usize,
     pub metrics_interval_secs: u64,
 }
 
+pub fn load() -> Result<Vec<Config>> {
+    tracing::debug!("loading configuration from environment variables");
+
+    let service_name_env_keys = [
+        "NAUTROUDS_SERVICE_NAME",
+        "NAUTROUDS_SERVICE_ID",
+        "SERVICE_NAME",
+        "SERVICE",
+        "NAME",
+    ];
+
+    let service_name: Arc<str> = service_name_env_keys
+        .iter()
+        .find_map(|key| env::var(key).ok())
+        .ok_or_else(|| {
+            tracing::error!(
+                var = "NAUTROUDS_SERVICE_NAME",
+                "missing required environment variable"
+            );
+            anyhow!("NAUTROUDS_SERVICE_NAME is required")
+        })?
+        .into();
+
+    let base_dir: Arc<Path> = env::var("NAUTROUDS_SERVICES_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/var/run/nautrouds/services"))
+        .into();
+
+    let max_connections: usize = env::var("NAUTROUDS_MAX_CONNS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1024);
+
+    let metrics_interval_secs: u64 = env::var("NAUTROUDS_METRICS_INTERVAL_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(15);
+
+    let target_addr_env_keys = ["NAUTROUDS_TARGET_ADDR", "TARGET_ADDR", "TARGET", "ADDR"];
+
+    let target_addrs_raw = target_addr_env_keys
+        .iter()
+        .find_map(|key| env::var(key).ok())
+        .ok_or_else(|| {
+            tracing::error!(
+                var = "NAUTROUDS_TARGET_ADDR",
+                "missing required environment variable"
+            );
+            anyhow!("NAUTROUDS_TARGET_ADDR is required")
+        })?;
+
+    let mut seen = std::collections::HashSet::new();
+    let target_addrs: Vec<String> = target_addrs_raw
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .filter(|s| seen.insert(s.clone()))
+        .collect();
+
+    if target_addrs.is_empty() {
+        tracing::error!(
+            var = "NAUTROUDS_TARGET_ADDR",
+            "no valid target addresses found"
+        );
+        anyhow::bail!("NAUTROUDS_TARGET_ADDR must contain at least one address");
+    }
+
+    Ok(target_addrs
+        .into_iter()
+        .map(|target_addr| {
+            Config::new(
+                service_name.clone(),
+                target_addr,
+                base_dir.clone(),
+                max_connections,
+                metrics_interval_secs,
+            )
+        })
+        .collect())
+}
+
 impl Config {
-    pub fn load() -> Result<Self> {
-        tracing::debug!("loading configuration from environment variables");
-
-        let service_name = env::var("NAUTROUDS_SERVICE_NAME")
-            .or_else(|_| env::var("NAUTROUDS_SERVICE_ID"))
-            .or_else(|_| env::var("SERVICE_NAME"))
-            .or_else(|_| env::var("SERVICE"))
-            .or_else(|_| env::var("NAME"))
-            .map_err(|_| {
-                tracing::error!(
-                    var = "NAUTROUDS_SERVICE_NAME",
-                    "missing required environment variable"
-                );
-                anyhow::anyhow!("NAUTROUDS_SERVICE_NAME is required")
-            })?;
-
-        let target_addr = env::var("NAUTROUDS_TARGET_ADDR")
-            .or_else(|_| env::var("TARGET_ADDR"))
-            .or_else(|_| env::var("TARGET"))
-            .or_else(|_| env::var("ADDR"))
-            .map_err(|_| {
-                tracing::error!(
-                    var = "NAUTROUDS_TARGET_ADDR",
-                    "missing required environment variable"
-                );
-                anyhow::anyhow!("NAUTROUDS_TARGET_ADDR is required")
-            })?;
-
-        let socket_name =
-            env::var("NAUTROUDS_SOCKET_NAME").unwrap_or_else(|_| "node-0.sock".to_string());
-
-        let base_dir = env::var("NAUTROUDS_SERVICES_DIR")
-            .unwrap_or_else(|_| "/var/run/nautrouds/services".to_string())
-            .into();
-
-        let max_connections = env::var("NAUTROUDS_MAX_CONNS")
-            .unwrap_or_else(|_| "1024".to_string())
-            .parse()
-            .unwrap_or(1024);
-
-        let metrics_interval_secs = env::var("NAUTROUDS_METRICS_INTERVAL_SECS")
-            .unwrap_or_else(|_| "15".to_string())
-            .parse()
-            .unwrap_or(15);
-
-        let cfg = Self {
+    pub fn new(
+        service_name: Arc<str>,
+        target_addr: String,
+        base_dir: Arc<Path>,
+        max_connections: usize,
+        metrics_interval_secs: u64,
+    ) -> Self {
+        Self {
             service_name,
             target_addr,
-            socket_name,
             base_dir,
             max_connections,
             metrics_interval_secs,
-        };
+        }
+    }
 
-        tracing::info!(
-            service = %cfg.service_name,
-            target = %cfg.target_addr,
-            socket = ?cfg.socket_path(),
-            max_conns = cfg.max_connections,
-            metrics_interval = cfg.metrics_interval_secs,
-            "configuration loaded"
-        );
-
-        Ok(cfg)
+    pub fn socket_id(&self) -> String {
+        self.target_addr.replace([':', '/'], "_")
     }
 
     pub fn socket_path(&self) -> PathBuf {
-        self.base_dir
-            .join(&self.service_name)
-            .join(&self.socket_name)
+        let socket_name = format!("{}.sock", self.socket_id());
+        self.service_dir().join(socket_name)
     }
 
-    #[cfg(unix)]
     pub fn service_dir(&self) -> PathBuf {
-        self.base_dir.join(&self.service_name)
+        self.base_dir.join(self.service_name.as_ref())
     }
 }
