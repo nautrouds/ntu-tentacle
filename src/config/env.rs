@@ -1,9 +1,8 @@
+use super::Config;
 use anyhow::{Result, anyhow};
 use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use super::Config;
-
 
 pub fn load() -> Result<Vec<Config>> {
     tracing::debug!("loading configuration from environment variables");
