@@ -4,12 +4,14 @@ compile_error!("This project is only supported on Unix systems.");
 mod config;
 mod metrics;
 mod relay;
+mod tls;
 mod tracked_stream;
 
 use anyhow::Result;
 use config::Config;
 use relay::metadata::{CommonInfo, Metadata};
 use std::sync::Arc;
+use tls::TlsManager;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -32,12 +34,12 @@ async fn main() -> Result<()> {
         return Err(e.into());
     }
 
-    let metadatas = expand_targets(cfg);
+    let metadatas = expand_targets(cfg).await?;
 
     let handles: Vec<_> = metadatas
         .into_iter()
         .map(|metadata| {
-            let target_addr = metadata.target.clone();
+            let target_addr = metadata.target_addr.clone();
             tokio::spawn(async move {
                 let r = relay::Relay::new(metadata);
                 if let Err(e) = r.run().await {
@@ -52,7 +54,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn expand_targets(config: Config) -> Vec<Metadata> {
+async fn expand_targets(config: Config) -> Result<Vec<Metadata>> {
     let Config {
         service_name,
         targets,
@@ -68,21 +70,25 @@ fn expand_targets(config: Config) -> Vec<Metadata> {
     });
 
     let mut metadatas: Vec<Metadata> = Vec::new();
+    let tls_manager = TlsManager::default();
 
     for target in targets {
-        let socket_id = target.replace([':', '/'], "_");
+        let socket_id = target.addr.replace([':', '/'], "_");
         let socket_name = format!("{}.sock", socket_id);
         let socket_path = base_dir.join(&common.service_name).join(socket_name);
+
+        let (target_addr, target_tls) = tls_manager.fetch(target).await?;
 
         let metadata = Metadata {
             common: common.clone(),
             socket_id: socket_id.clone(),
             socket_path,
-            target,
+            target_addr,
+            target_tls,
         };
 
         metadatas.push(metadata);
     }
 
-    metadatas
+    Ok(metadatas)
 }

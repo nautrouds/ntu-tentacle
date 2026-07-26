@@ -95,7 +95,7 @@ impl Relay {
         self.spawn_reporter();
 
         info!(
-            target = %self.metadata.target,
+            target = %self.metadata.target_addr,
             max_conns = self.metadata.common.max_connections,
             "relay loop initialized"
         );
@@ -104,10 +104,10 @@ impl Relay {
             check_interval.tick().await;
 
             let is_alive = self.probe().await;
-            debug!(target = %self.metadata.target, alive = is_alive, "health probe result");
+            debug!(target = %self.metadata.target_addr, alive = is_alive, "health probe result");
 
             if is_alive && active_handle.is_none() {
-                info!(target = %self.metadata.target, "target online, starting listener");
+                info!(target = %self.metadata.target_addr, "target online, starting listener");
                 let metadata = self.metadata.clone();
                 let pool = self.pool.clone();
                 let _metrics = self.metrics.clone();
@@ -120,7 +120,7 @@ impl Relay {
                     }
                 }));
             } else if !is_alive && active_handle.is_some() {
-                warn!(target = %self.metadata.target, "target offline, stopping listener");
+                warn!(target = %self.metadata.target_addr, "target offline, stopping listener");
                 if let Some(handle) = active_handle.take() {
                     let _ = stop_tx.send(());
                     handle.abort();
@@ -133,17 +133,17 @@ impl Relay {
     async fn probe(&self) -> bool {
         match tokio::time::timeout(
             Duration::from_secs(1),
-            TcpStream::connect(&self.metadata.target),
+            TcpStream::connect(&self.metadata.target_addr),
         )
         .await
         {
             Ok(Ok(_)) => true,
             Ok(Err(e)) => {
-                debug!(target = %self.metadata.target, error = %e, "probe connection failed");
+                debug!(target = %self.metadata.target_addr, error = %e, "probe connection failed");
                 false
             }
             Err(_) => {
-                debug!(target = %self.metadata.target, "probe timed out");
+                debug!(target = %self.metadata.target_addr, "probe timed out");
                 false
             }
         }
@@ -204,7 +204,7 @@ async fn run_uds_listener(
                 match accept_res {
                     Ok((uds_stream, addr)) => {
                         let pool = pool.clone();
-                        let target_addr = metadata.target.clone();
+                        let target_addr = metadata.target_addr.clone();
                         let metrics = metrics.clone();
 
                         // Acquire permit from connection pool

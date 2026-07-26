@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::tls;
+
 #[derive(Debug, Clone)]
 pub struct CommonInfo {
     pub max_connections: usize,
@@ -13,5 +15,6 @@ pub struct Metadata {
     pub common: Arc<CommonInfo>,
     pub socket_id: String,
     pub socket_path: PathBuf,
-    pub target: String,
+    pub target_addr: String,
+    pub target_tls: tls::Tls,
 }
