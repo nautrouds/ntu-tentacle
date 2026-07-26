@@ -11,9 +11,10 @@ pub struct Config {
 }
 
 pub mod env;
+pub mod yml;
 
 pub fn load() -> Result<Config> {
-    let config = env::load()?;
+    let config = env::load().and_then(yml::load)?;
 
     if config.targets.is_empty() {
         tracing::error!(
