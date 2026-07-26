@@ -15,7 +15,7 @@ async fn main() -> Result<()> {
 
     tracing::info!("ntu-tentacle starting");
 
-    let cfg = match config::load() {
+    let cfg = match config::env::load() {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = ?e, "initialization failed: configuration error");
@@ -23,11 +23,11 @@ async fn main() -> Result<()> {
         }
     };
 
-    if let Some(base_dir) = cfg.first().map(|c| c.base_dir.clone())
-        && let Err(e) = std::fs::create_dir_all(&base_dir)
-    {
-        tracing::error!(error = ?e, path = ?base_dir, "failed to create base directory");
-        return Err(e.into());
+    if let Some(base_dir) = cfg.first().map(|c| c.base_dir.clone()) {
+        if let Err(e) = std::fs::create_dir_all(&base_dir) {
+            tracing::error!(error = ?e, path = ?base_dir, "failed to create base directory");
+            return Err(e.into());
+        }
     }
 
     let handles: Vec<_> = cfg
