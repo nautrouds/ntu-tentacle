@@ -16,6 +16,8 @@ tokio-util = { version = "0.7", features = ["full"] }
 tentacle-metrics = { git = "https://github.com/nautrouds/tentacle-metrics.git", tag = "v1.1.0" }
 prost = "0.13.5"
 crc = "3.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9"
 
 [profile.release]
 opt-level = "z"
