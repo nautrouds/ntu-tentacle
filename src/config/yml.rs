@@ -1,8 +1,17 @@
-use super::Config;
+use super::{Config, Target};
 use anyhow::{Context, Ok, Result};
+use serde::Deserialize;
 use serde_yaml::Value;
 use std::env;
 use std::fs;
+use std::path::PathBuf;
+
+#[derive(Debug, Deserialize, Default)]
+struct TargetTlsRaw {
+    ca: Option<PathBuf>,
+    cert: Option<PathBuf>,
+    key: Option<PathBuf>,
+}
 
 pub fn load(cfg: Config) -> Result<Config> {
     let targets_file_env_keys = ["NAUTROUDS_TARGETS_FILE", "TARGETS_FILE", "TARGETS"];
@@ -18,11 +27,24 @@ pub fn load(cfg: Config) -> Result<Config> {
             .with_context(|| format!("failed to parse targets file as YAML: {targets_file}"))?;
 
         if let Some(m) = value.as_mapping() {
-            let targets = m
-                .keys()
-                .filter_map(|k| k.as_str().map(str::trim).filter(|s| !s.is_empty()))
-                .map(String::from)
-                .collect();
+            let mut targets = Vec::new();
+
+            for (k, v) in m {
+                let Some(target) = k.as_str().map(str::trim).filter(|s| !s.is_empty()) else {
+                    continue;
+                };
+                let addr = target.to_string();
+
+                let TargetTlsRaw { ca, cert, key } =
+                    serde_yaml::from_value::<TargetTlsRaw>(v.clone()).unwrap_or_default();
+
+                targets.push(Target {
+                    addr,
+                    ca,
+                    cert,
+                    key,
+                });
+            }
 
             return Ok(Config { targets, ..cfg });
         }

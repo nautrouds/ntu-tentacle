@@ -2,9 +2,28 @@ use anyhow::Result;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
+pub struct Target {
+    pub addr: String,
+    pub ca: Option<PathBuf>,
+    pub cert: Option<PathBuf>,
+    pub key: Option<PathBuf>,
+}
+
+impl Target {
+    pub fn from(addr: String) -> Self {
+        Self {
+            addr,
+            ca: None,
+            cert: None,
+            key: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Config {
     pub service_name: String,
-    pub targets: Vec<String>,
+    pub targets: Vec<Target>,
     pub base_dir: PathBuf,
     pub max_connections: usize,
     pub metrics_interval_secs: u64,

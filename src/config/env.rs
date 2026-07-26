@@ -1,4 +1,4 @@
-use super::Config;
+use super::{Config, Target};
 use anyhow::{Result, anyhow};
 use std::env;
 use std::path::PathBuf;
@@ -47,12 +47,13 @@ pub fn load() -> Result<Config> {
         .unwrap_or_default();
 
     let mut seen = std::collections::HashSet::new();
-    let targets: Vec<String> = target_addrs_raw
+    let targets: Vec<Target> = target_addrs_raw
         .split(',')
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(String::from)
         .filter(|s| seen.insert(s.clone()))
+        .map(Target::from)
         .collect();
 
     Ok(Config {
