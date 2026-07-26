@@ -1,4 +1,3 @@
-use crate::config::Config;
 use crate::metrics::MetricsManager;
 use crate::metrics::MetricsSnapshot;
 use crate::tracked_stream::TrackedStream;
@@ -15,19 +14,22 @@ use tokio::sync::{Semaphore, watch};
 use tokio::time::interval;
 use tracing::error;
 use tracing::{debug, info, warn};
+pub mod metadata;
+
+use metadata::Metadata;
 
 pub struct Relay {
-    cfg: Arc<Config>,
+    metadata: Arc<Metadata>,
     pool: Arc<Semaphore>,
     metrics: Arc<MetricsManager>,
 }
 
 impl Relay {
-    pub fn new(cfg: Config) -> Self {
-        let max_conn = cfg.max_connections;
+    pub fn new(metadata: Metadata) -> Self {
+        let max_conn = metadata.common.max_connections;
         let metrics = Arc::new(MetricsManager::new());
         Self {
-            cfg: Arc::new(cfg),
+            metadata: Arc::new(metadata),
             pool: Arc::new(Semaphore::new(max_conn)),
             metrics,
         }
@@ -36,10 +38,11 @@ impl Relay {
     fn spawn_reporter(&self) {
         let metrics = self.metrics.clone();
 
-        let socket_id = self.cfg.socket_id();
-        let service_name = self.cfg.service_name.to_string();
-        let socket_path = self.cfg.base_dir.join("metrics.sock");
-        let mut metrics_interval = interval(Duration::from_secs(self.cfg.metrics_interval_secs));
+        let socket_id = self.metadata.socket_id.clone();
+        let socket_path = self.metadata.socket_path.clone();
+        let service_name = self.metadata.common.service_name.clone();
+        let metrics_interval_secs = self.metadata.common.metrics_interval_secs;
+        let mut metrics_interval = interval(Duration::from_secs(metrics_interval_secs));
 
         tokio::spawn(async move {
             let mut snap = MetricsSnapshot::default(socket_id, service_name);
@@ -92,8 +95,8 @@ impl Relay {
         self.spawn_reporter();
 
         info!(
-            target = %self.cfg.target_addr,
-            max_conns = self.cfg.max_connections,
+            target = %self.metadata.target,
+            max_conns = self.metadata.common.max_connections,
             "relay loop initialized"
         );
 
@@ -101,23 +104,23 @@ impl Relay {
             check_interval.tick().await;
 
             let is_alive = self.probe().await;
-            debug!(target = %self.cfg.target_addr, alive = is_alive, "health probe result");
+            debug!(target = %self.metadata.target, alive = is_alive, "health probe result");
 
             if is_alive && active_handle.is_none() {
-                info!(target = %self.cfg.target_addr, "target online, starting listener");
-                let cfg = self.cfg.clone();
+                info!(target = %self.metadata.target, "target online, starting listener");
+                let metadata = self.metadata.clone();
                 let pool = self.pool.clone();
                 let _metrics = self.metrics.clone();
                 let stop_rx = _stop_rx.clone();
 
                 active_handle = Some(tokio::spawn(async move {
                     #[cfg(unix)]
-                    if let Err(e) = run_uds_listener(cfg, pool, _metrics, stop_rx).await {
+                    if let Err(e) = run_uds_listener(metadata, pool, _metrics, stop_rx).await {
                         error!(error = ?e, "uds listener failure");
                     }
                 }));
             } else if !is_alive && active_handle.is_some() {
-                warn!(target = %self.cfg.target_addr, "target offline, stopping listener");
+                warn!(target = %self.metadata.target, "target offline, stopping listener");
                 if let Some(handle) = active_handle.take() {
                     let _ = stop_tx.send(());
                     handle.abort();
@@ -130,17 +133,17 @@ impl Relay {
     async fn probe(&self) -> bool {
         match tokio::time::timeout(
             Duration::from_secs(1),
-            TcpStream::connect(&self.cfg.target_addr),
+            TcpStream::connect(&self.metadata.target),
         )
         .await
         {
             Ok(Ok(_)) => true,
             Ok(Err(e)) => {
-                debug!(target = %self.cfg.target_addr, error = %e, "probe connection failed");
+                debug!(target = %self.metadata.target, error = %e, "probe connection failed");
                 false
             }
             Err(_) => {
-                debug!(target = %self.cfg.target_addr, "probe timed out");
+                debug!(target = %self.metadata.target, "probe timed out");
                 false
             }
         }
@@ -148,21 +151,22 @@ impl Relay {
 }
 
 async fn run_uds_listener(
-    cfg: Arc<Config>,
+    metadata: Arc<Metadata>,
     pool: Arc<Semaphore>,
     metrics: Arc<MetricsManager>,
     mut stop_rx: watch::Receiver<()>,
 ) -> Result<()> {
-    let socket_path = cfg.socket_path();
-    let service_dir = cfg.service_dir();
+    let socket_path = metadata.socket_path.clone();
     let temp_socket_path = socket_path.with_extension("tmp");
 
     debug!(path = ?socket_path, "binding unix domain socket");
 
-    // Ensure directory exists
-    if !service_dir.exists() {
-        info!(dir = ?service_dir, "creating service directory");
-        fs::create_dir_all(&service_dir)?;
+    // Ensure parent directory exists
+    if let Some(parent) = socket_path.parent()
+        && !parent.exists()
+    {
+        info!(dir = ?parent, "creating service directory");
+        fs::create_dir_all(parent)?;
     }
 
     // Cleanup old sockets
@@ -200,7 +204,7 @@ async fn run_uds_listener(
                 match accept_res {
                     Ok((uds_stream, addr)) => {
                         let pool = pool.clone();
-                        let target_addr = cfg.target_addr.clone();
+                        let target_addr = metadata.target.clone();
                         let metrics = metrics.clone();
 
                         // Acquire permit from connection pool
@@ -215,7 +219,7 @@ async fn run_uds_listener(
 
                         debug!(
                             client = ?addr,
-                            active_conns = cfg.max_connections - pool.available_permits(),
+                            active_conns = metadata.common.max_connections - pool.available_permits(),
                             "connection accepted"
                         );
 

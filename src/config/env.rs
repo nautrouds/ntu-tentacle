@@ -1,10 +1,9 @@
 use super::Config;
 use anyhow::{Result, anyhow};
 use std::env;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::path::PathBuf;
 
-pub fn load() -> Result<Vec<Config>> {
+pub fn load() -> Result<Config> {
     tracing::debug!("loading configuration from environment variables");
 
     let service_name_env_keys = [
@@ -15,7 +14,7 @@ pub fn load() -> Result<Vec<Config>> {
         "NAME",
     ];
 
-    let service_name: Arc<str> = service_name_env_keys
+    let service_name: String = service_name_env_keys
         .iter()
         .find_map(|key| env::var(key).ok())
         .ok_or_else(|| {
@@ -24,13 +23,11 @@ pub fn load() -> Result<Vec<Config>> {
                 "missing required environment variable"
             );
             anyhow!("NAUTROUDS_SERVICE_NAME is required")
-        })?
-        .into();
+        })?;
 
-    let base_dir: Arc<Path> = env::var("NAUTROUDS_SERVICES_DIR")
+    let base_dir: PathBuf = env::var("NAUTROUDS_SERVICES_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/var/run/nautrouds/services"))
-        .into();
+        .unwrap_or_else(|_| PathBuf::from("/var/run/nautrouds/services"));
 
     let max_connections: usize = env::var("NAUTROUDS_MAX_CONNS")
         .ok()
@@ -47,16 +44,10 @@ pub fn load() -> Result<Vec<Config>> {
     let target_addrs_raw = target_addr_env_keys
         .iter()
         .find_map(|key| env::var(key).ok())
-        .ok_or_else(|| {
-            tracing::error!(
-                var = "NAUTROUDS_TARGET_ADDR",
-                "missing required environment variable"
-            );
-            anyhow!("NAUTROUDS_TARGET_ADDR is required")
-        })?;
+        .unwrap_or_default();
 
     let mut seen = std::collections::HashSet::new();
-    let target_addrs: Vec<String> = target_addrs_raw
+    let targets: Vec<String> = target_addrs_raw
         .split(',')
         .map(str::trim)
         .filter(|s| !s.is_empty())
@@ -64,24 +55,11 @@ pub fn load() -> Result<Vec<Config>> {
         .filter(|s| seen.insert(s.clone()))
         .collect();
 
-    if target_addrs.is_empty() {
-        tracing::error!(
-            var = "NAUTROUDS_TARGET_ADDR",
-            "no valid target addresses found"
-        );
-        anyhow::bail!("NAUTROUDS_TARGET_ADDR must contain at least one address");
-    }
-
-    Ok(target_addrs
-        .into_iter()
-        .map(|target_addr| {
-            Config::new(
-                service_name.clone(),
-                target_addr,
-                base_dir.clone(),
-                max_connections,
-                metrics_interval_secs,
-            )
-        })
-        .collect())
+    Ok(Config {
+        service_name,
+        targets,
+        base_dir,
+        max_connections,
+        metrics_interval_secs,
+    })
 }
