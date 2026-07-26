@@ -15,7 +15,7 @@ async fn main() -> Result<()> {
 
     tracing::info!("ntu-tentacle starting");
 
-    let cfg = match config::load() {
+    let cfg = match config::env::load() {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = ?e, "initialization failed: configuration error");
