@@ -73,6 +73,14 @@ async fn expand_targets(config: Config) -> Result<Vec<Metadata>> {
     let tls_manager = TlsManager::default();
 
     for target in targets {
+        if !target.tls_pair_is_valid() {
+            tracing::warn!(
+                target = %target.addr,
+                "skipping target: TLS cert and key must both be set or both omitted"
+            );
+            continue;
+        }
+
         let socket_id = target.addr.replace([':', '/'], "_");
         let socket_name = format!("{}.sock", socket_id);
         let socket_path = base_dir.join(&common.service_name).join(socket_name);
