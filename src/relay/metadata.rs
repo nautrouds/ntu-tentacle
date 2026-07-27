@@ -10,7 +10,7 @@ pub struct CommonInfo {
     pub metrics_interval_secs: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Metadata {
     pub common: Arc<CommonInfo>,
     pub socket_id: String,
