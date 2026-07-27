@@ -18,6 +18,10 @@ impl Target {
             key: None,
         }
     }
+
+    pub fn tls_pair_is_valid(&self) -> bool {
+        self.cert.is_some() == self.key.is_some()
+    }
 }
 
 #[derive(Debug, Clone)]
