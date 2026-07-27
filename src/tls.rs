@@ -3,14 +3,83 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, OnceCell, RwLock};
+use tracing::warn;
 
 pub type Bytes = Arc<Vec<u8>>;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct Tls {
-    pub ca: Option<Bytes>,
-    pub cert: Option<Bytes>,
-    pub key: Option<Bytes>,
+    inner: Option<(tokio_rustls::TlsConnector, rustls_pki_types::ServerName<'static>)>,
+}
+
+impl Tls {
+    pub fn is_enabled(&self) -> bool {
+        self.inner.is_some()
+    }
+
+    pub async fn connect(
+        &self,
+        tcp_stream: tokio::net::TcpStream,
+    ) -> Result<tokio_rustls::client::TlsStream<tokio::net::TcpStream>> {
+        let (connector, sni) = self
+            .inner
+            .as_ref()
+            .expect("connect called without a TLS connector configured");
+
+        connector
+            .connect(sni.clone(), tcp_stream)
+            .await
+            .context("TLS handshake failed")
+    }
+}
+
+fn server_name(addr: &str) -> Result<rustls_pki_types::ServerName<'static>> {
+    let host = addr.rsplit_once(':').map(|(h, _)| h).unwrap_or(addr);
+    rustls_pki_types::ServerName::try_from(host.to_string()).context("invalid TLS server name")
+}
+
+fn build_connector(
+    ca: Option<Bytes>,
+    cert: Option<Bytes>,
+    key: Option<Bytes>,
+) -> Result<Option<tokio_rustls::TlsConnector>> {
+    if ca.is_none() && (cert.is_none() || key.is_none()) {
+        return Ok(None);
+    }
+
+    let mut roots = rustls::RootCertStore::empty();
+    if let Some(ca_bytes) = &ca {
+        for cert in rustls_pemfile::certs(&mut ca_bytes.as_slice()) {
+            let cert = cert.context("invalid CA cert in PEM")?;
+            roots.add(cert).context("failed to add CA certificate")?;
+        }
+    } else {
+        let loaded = rustls_native_certs::load_native_certs();
+        for err in &loaded.errors {
+            warn!(error = %err, "failed to load a native certificate");
+        }
+        for cert in loaded.certs {
+            let _ = roots.add(cert);
+        }
+    }
+
+    let builder = rustls::ClientConfig::builder().with_root_certificates(roots);
+
+    let config = if let (Some(cert_bytes), Some(key_bytes)) = (&cert, &key) {
+        let chain: Vec<_> = rustls_pemfile::certs(&mut cert_bytes.as_slice())
+            .collect::<std::result::Result<_, _>>()
+            .context("invalid client cert PEM")?;
+        let key = rustls_pemfile::private_key(&mut key_bytes.as_slice())
+            .context("invalid client key PEM")?
+            .context("no private key found in key PEM")?;
+        builder
+            .with_client_auth_cert(chain, key)
+            .context("invalid client cert/key pair")?
+    } else {
+        builder.with_no_client_auth()
+    };
+
+    Ok(Some(tokio_rustls::TlsConnector::from(Arc::new(config))))
 }
 
 type LoadResult = std::result::Result<Bytes, Arc<anyhow::Error>>;
@@ -53,10 +122,6 @@ pub struct TlsManager {
 }
 
 impl TlsManager {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     async fn load(slot: &Slot, path: &str) -> Result<Bytes> {
         if let Some(cached) = slot.get_cached(path).await {
             return Ok(cached);
@@ -91,23 +156,28 @@ impl TlsManager {
             cert,
             key,
         } = target;
-        let mut tls = Tls::default();
 
-        if let Some(ca_path) = ca.as_deref().and_then(|p| p.to_str()) {
-            let ca_bytes = Self::load(&self.ca, ca_path).await?;
-            tls.ca = Some(ca_bytes);
-        }
+        let ca_bytes = match ca.as_deref().and_then(|p| p.to_str()) {
+            Some(ca_path) => Some(Self::load(&self.ca, ca_path).await?),
+            None => None,
+        };
 
-        if let (Some(cert_path), Some(key_path)) = (
+        let (cert_bytes, key_bytes) = match (
             cert.as_deref().and_then(|p| p.to_str()),
             key.as_deref().and_then(|p| p.to_str()),
         ) {
-            let cert_bytes = Self::load(&self.cert, cert_path).await?;
-            let key_bytes = Self::load(&self.key, key_path).await?;
-            tls.cert = Some(cert_bytes);
-            tls.key = Some(key_bytes);
-        }
+            (Some(cert_path), Some(key_path)) => (
+                Some(Self::load(&self.cert, cert_path).await?),
+                Some(Self::load(&self.key, key_path).await?),
+            ),
+            _ => (None, None),
+        };
 
-        Ok((addr, tls))
+        let inner = match build_connector(ca_bytes, cert_bytes, key_bytes)? {
+            Some(connector) => Some((connector, server_name(&addr)?)),
+            None => None,
+        };
+
+        Ok((addr, Tls { inner }))
     }
 }
