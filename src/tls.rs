@@ -68,7 +68,7 @@ fn build_connector(
 
     let builder = rustls::ClientConfig::builder().with_root_certificates(roots);
 
-    let config = if let (Some(cert_bytes), Some(key_bytes)) = (&cert, &key) {
+    let mut config = if let (Some(cert_bytes), Some(key_bytes)) = (&cert, &key) {
         let chain: Vec<_> = rustls_pemfile::certs(&mut cert_bytes.as_slice())
             .collect::<std::result::Result<_, _>>()
             .context("invalid client cert PEM")?;
@@ -81,6 +81,9 @@ fn build_connector(
     } else {
         builder.with_no_client_auth()
     };
+
+    // Without ALPN, servers gating on it may pick http/1.1 for h2 traffic and choke on it.
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
 
     Ok(Some(tokio_rustls::TlsConnector::from(Arc::new(config))))
 }
