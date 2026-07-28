@@ -165,6 +165,11 @@ async fn handle_connection(
 
     match TcpStream::connect(&target_addr).await {
         Ok(tcp_stream) => {
+            // Nagle's algorithm otherwise adds up to ~40ms per small gRPC frame.
+            if let Err(e) = tcp_stream.set_nodelay(true) {
+                debug!(target = %target_addr, error = ?e, "failed to set TCP_NODELAY");
+            }
+
             if target_tls.is_enabled() {
                 match target_tls.connect(tcp_stream).await {
                     Ok(tls_stream) => {
