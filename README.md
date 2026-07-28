@@ -1,47 +1,76 @@
+English | [繁體中文](README.zh-TW.md)
+
 # ntu-tentacle
 
-A standalone relay service for the Nautrouds ecosystem. It acts as a bridge between Unix Domain Sockets (UDS) and TCP streams, allowing for flexible service routing and connectivity.
+A lightweight relay for the Nautrouds ecosystem that bridges Unix Domain Sockets (UDS) and TCP (optionally TLS) targets, letting backend services — including gRPC — be exposed over UDS with connection pooling, health probing, hot reload, and metrics reporting.
 
 ## Features
 
-- **UDS to TCP Forwarding**: Listens on a Unix Domain Socket and forwards traffic to a target TCP address.
-- **Connection Pooling**: Manages connections using a semaphore-based pool to prevent resource exhaustion.
-- **Health Probing**: Automatically detects if the target service is online before starting the UDS listener.
-- **Graceful Shutdown**: Handles shutdown signals to clean up socket files.
+- **UDS ↔ TCP/TLS relay** — transparent byte-level forwarding (`copy_bidirectional`); it does not parse HTTP/2 or gRPC frames, so any protocol carried over the connection passes through untouched.
+- **Connection pooling** — a semaphore-based pool per target caps concurrent connections without stalling new accepts.
+- **Health probing** — the target TCP address is probed every 2 seconds; the UDS listener is only started while the target is reachable and is torn down when it goes offline.
+- **TLS client support** — custom CA, mutual TLS (client cert/key), and ALPN fixed to `h2`/`http1.1` so gRPC (HTTP/2) negotiates correctly against upstreams that gate on ALPN.
+- **Hot reload** — sending `SIGHUP` re-reads configuration and applies the new target list without dropping in-flight connections.
+- **Graceful shutdown** — `SIGINT`/`SIGTERM` drain in-flight connections before the process exits.
+- **Built-in metrics** — active connections, attempt/failure counters, bytes transmitted, and a latency histogram are encoded as protobuf and pushed periodically over UDS.
 
-## Configuration
+## Architecture
 
-Configuration is handled via environment variables:
+On startup, `ntu-tentacle` loads its configuration and resolves each target (including any TLS material); for every target it spawns a relay that probes the target's TCP liveness, binds the corresponding UDS, and — once a client connects — dials the TCP (or TLS-upgraded) target and forwards bytes bidirectionally, while periodically pushing metrics out over UDS as well. Sending `SIGHUP` re-applies configuration changes without interrupting existing connections.
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `NAUTROUDS_SERVICE_NAME` | Name of the service (used for socket path) | Required |
-| `NAUTROUDS_TARGET_ADDR` | Target TCP address (e.g., `localhost:80`) | Required |
-| `NAUTROUDS_SOCKET_NAME` | Filename for the UDS socket | `node-0.sock` |
-| `NAUTROUDS_SERVICES_DIR` | Base directory for service sockets | `/var/run/nautrouds/services` |
-| `NAUTROUDS_MAX_CONNS` | Maximum concurrent connections | `1024` |
-
-## Getting Started
+## Installation
 
 ### Prerequisites
 
-- Rust 1.85+ (for building from source)
-- Docker (optional)
+- Rust 1.85+ (edition 2024)
+- `protoc` (Protocol Buffers compiler — required to build the `tentacle-metrics` dependency)
+- Unix only
 
-### Building from Source
+### Building from source
 
 ```bash
 cargo build --release
 ```
 
-### Running
+### Docker
+
+```bash
+docker build -f docker/Dockerfile -t ntu-tentacle .
+```
+
+## Configuration
+
+Configuration is read from environment variables.
+
+| Variable | Description | Default |
+|---|---|---|
+| `NAUTROUDS_SERVICE_NAME` | Service name, used to build the socket directory | **required** |
+| `NAUTROUDS_TARGET_ADDR` | Comma-separated list of target TCP addresses (e.g. `localhost:8080`) | **required**, unless a targets file is provided |
+| `NAUTROUDS_TARGETS_FILE` | Path to a YAML targets file (see below) | none |
+| `NAUTROUDS_SERVICES_DIR` | Base directory under which service socket directories are created | `/var/run/nautrouds/services` |
+| `NAUTROUDS_MAX_CONNS` | Maximum concurrent connections per target | `1024` |
+| `NAUTROUDS_METRICS_INTERVAL_SECS` | Interval, in seconds, between metrics pushes | `15` |
+
+### Targets YAML file (optional, for per-target TLS)
+
+Setting a targets file **completely replaces** the target list derived from environment variables. It is a YAML mapping of target address to an optional TLS configuration; `cert` and `key` must both be set or both omitted — a target with only one of them set is skipped (with a warning logged) rather than failing startup.
+
+```yaml
+localhost:8080: {}
+
+api.internal:9090:
+  ca: /etc/ntu-tentacle/certs/ca.pem
+
+secure-backend:9443:
+  ca: /etc/ntu-tentacle/certs/ca.pem
+  cert: /etc/ntu-tentacle/certs/client.pem
+  key: /etc/ntu-tentacle/certs/client.key
+```
+
+## Running
 
 ```bash
 export NAUTROUDS_SERVICE_NAME=myapp
 export NAUTROUDS_TARGET_ADDR=localhost:8080
 ./target/release/ntu-tentacle
 ```
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
