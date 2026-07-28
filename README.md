@@ -72,12 +72,12 @@ secure-backend:9443:
 ```bash
 export NAUTROUDS_SERVICE_NAME=myapp
 export NAUTROUDS_TARGET_ADDR=localhost:8080
-./target/release/ntu-tentacle
+./target/release/tentacle
 ```
 
 ## Reload
 
 ```bash
-ntu-tentacle -r myapp   # or: --reload myapp
-ntu-tentacle -r         # falls back to resolving the service name from the environment
+tentacle -r myapp   # or: --reload myapp
+tentacle -r         # falls back to resolving the service name from the environment
 ```

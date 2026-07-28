@@ -24,6 +24,6 @@ RUN touch src/main.rs && cargo build --release --target x86_64-unknown-linux-mus
 # Final Stage
 FROM scratch
 
-COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/ntu-tentacle /entrypoint
+COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/tentacle /tentacle
 
-ENTRYPOINT ["/entrypoint"]
+ENTRYPOINT ["/tentacle"]

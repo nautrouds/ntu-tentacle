@@ -6,6 +6,10 @@ edition = "2024"
 [package.metadata.nautrouds]
 min_core_ref = "26070722-9237c47"
 
+[[bin]]
+name = "tentacle"
+path = "src/main.rs"
+
 [dependencies]
 arc-swap = "1"
 tokio = { version = "1.36", features = ["full"] }

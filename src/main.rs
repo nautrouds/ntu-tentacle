@@ -16,7 +16,7 @@ use std::sync::Arc;
 use tls::TlsManager;
 use tokio::task::JoinSet;
 
-const PID_DIR: &str = "/usr/local/ntu-tentacle";
+const PID_DIR: &str = "/usr/local/tentacle";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -28,7 +28,7 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         Some("-V") | Some("--version") => {
-            println!("ntu-tentacle {}", env!("CARGO_PKG_VERSION"));
+            println!("tentacle {}", env!("CARGO_PKG_VERSION"));
             return Ok(());
         }
         Some("-r") | Some("--reload") => {
@@ -62,13 +62,13 @@ async fn main() -> Result<()> {
 
 fn print_help() {
     println!(
-        "ntu-tentacle {version}\n\
+        "tentacle {version}\n\
 Usage:\n\
-  ntu-tentacle                     Run the relay daemon (configured via environment variables)\n\
-  ntu-tentacle -r, --reload [NAME] Send SIGHUP to reload the running daemon for service NAME\n\
-                                   (falls back to NAUTROUDS_SERVICE_NAME etc. if NAME is omitted)\n\
-  ntu-tentacle -h, --help          Print this help message\n\
-  ntu-tentacle -V, --version       Print version information",
+  tentacle                     Run the relay daemon (configured via environment variables)\n\
+  tentacle -r, --reload [NAME] Send SIGHUP to reload the running daemon for service NAME\n\
+                                (falls back to NAUTROUDS_SERVICE_NAME etc. if NAME is omitted)\n\
+  tentacle -h, --help          Print this help message\n\
+  tentacle -V, --version       Print version information",
         version = env!("CARGO_PKG_VERSION")
     );
 }
@@ -123,7 +123,7 @@ fn reload(service_name: &str) -> i32 {
     // SAFETY: kill(2) with a valid pid and SIGHUP has no memory-safety implications.
     let ret = unsafe { libc::kill(pid, libc::SIGHUP) };
     if ret == 0 {
-        println!("sent SIGHUP to ntu-tentacle (service '{service_name}', pid {pid})");
+        println!("sent SIGHUP to tentacle (service '{service_name}', pid {pid})");
         0
     } else {
         let err = std::io::Error::last_os_error();
@@ -136,7 +136,7 @@ async fn run_daemon() -> Result<()> {
     // Initialize logging
     tracing_subscriber::fmt::init();
 
-    tracing::info!("ntu-tentacle starting");
+    tracing::info!("tentacle starting");
 
     let mut relays: HashMap<String, Arc<relay::Relay>> = HashMap::new();
     let mut tasks: JoinSet<()> = JoinSet::new();
@@ -216,7 +216,7 @@ async fn run_daemon() -> Result<()> {
         remove_pid_file_if_owned(&service_name);
     }
 
-    tracing::info!("ntu-tentacle stopped");
+    tracing::info!("tentacle stopped");
 
     Ok(())
 }
