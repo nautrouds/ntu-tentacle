@@ -10,8 +10,10 @@ mod tracked_stream;
 use anyhow::Result;
 use config::Config;
 use relay::metadata::{CommonInfo, Metadata};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tls::TlsManager;
+use tokio::task::JoinSet;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -22,20 +24,48 @@ async fn main() -> Result<()> {
 
     let metadatas = load_metadatas().await?;
 
-    let handles: Vec<_> = metadatas
-        .into_iter()
-        .map(|metadata| {
-            let target_addr = metadata.target_addr.clone();
-            tokio::spawn(async move {
-                let r = relay::Relay::new(metadata);
-                if let Err(e) = r.run().await {
-                    tracing::error!(target = %target_addr, error = ?e, "runtime fatal error");
-                }
-            })
-        })
-        .collect();
+    let mut relays: HashMap<String, Arc<relay::Relay>> = HashMap::new();
+    let mut tasks: JoinSet<()> = JoinSet::new();
 
-    futures::future::join_all(handles).await;
+    for metadata in metadatas {
+        let target_addr = metadata.target_addr.clone();
+        let r = Arc::new(relay::Relay::new(metadata));
+        relays.insert(target_addr.clone(), r.clone());
+
+        tasks.spawn(async move {
+            if let Err(e) = r.run().await {
+                tracing::error!(target = %target_addr, error = ?e, "runtime fatal error");
+            }
+        });
+    }
+
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+
+        let mut sigterm =
+            signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!("received SIGINT, shutting down");
+            }
+            _ = sigterm.recv() => {
+                tracing::info!("received SIGTERM, shutting down");
+            }
+        }
+    }
+
+    for relay in relays.values() {
+        relay.shutdown();
+    }
+
+    while let Some(res) = tasks.join_next().await {
+        if let Err(e) = res {
+            tracing::error!(error = ?e, "relay task panicked");
+        }
+    }
+
+    tracing::info!("ntu-tentacle stopped");
 
     Ok(())
 }

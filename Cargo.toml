@@ -12,7 +12,6 @@ tokio = { version = "1.36", features = ["full"] }
 anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = "0.3"
-futures = "0.3"
 tokio-util = { version = "0.7", features = ["full"] }
 tentacle-metrics = { git = "https://github.com/nautrouds/tentacle-metrics.git", tag = "v1.1.0" }
 prost = "0.13.5"
