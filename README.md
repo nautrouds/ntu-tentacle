@@ -74,3 +74,10 @@ export NAUTROUDS_SERVICE_NAME=myapp
 export NAUTROUDS_TARGET_ADDR=localhost:8080
 ./target/release/ntu-tentacle
 ```
+
+## Reload
+
+```bash
+ntu-tentacle -r myapp   # or: --reload myapp
+ntu-tentacle -r         # falls back to resolving the service name from the environment
+```

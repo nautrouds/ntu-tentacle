@@ -11,12 +11,128 @@ use anyhow::Result;
 use config::Config;
 use relay::metadata::{CommonInfo, Metadata};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tls::TlsManager;
 use tokio::task::JoinSet;
 
+const PID_DIR: &str = "/usr/local/ntu-tentacle";
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+
+    match args.get(1).map(String::as_str) {
+        Some("-h") | Some("--help") => {
+            print_help();
+            return Ok(());
+        }
+        Some("-V") | Some("--version") => {
+            println!("ntu-tentacle {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        Some("-r") | Some("--reload") => {
+            let explicit = match args.get(2).map(String::as_str) {
+                Some(s) if !s.starts_with('-') => Some(s.to_string()),
+                _ => None,
+            };
+            let service_name = explicit.or_else(config::env::service_name_from_env);
+
+            let service_name = match service_name {
+                Some(s) => s,
+                None => {
+                    eprintln!("error: no service name given and none found in environment");
+                    print_help();
+                    std::process::exit(1);
+                }
+            };
+
+            std::process::exit(reload(&service_name));
+        }
+        Some(unknown) => {
+            eprintln!("error: unknown option '{unknown}'");
+            print_help();
+            std::process::exit(1);
+        }
+        None => {}
+    }
+
+    run_daemon().await
+}
+
+fn print_help() {
+    println!(
+        "ntu-tentacle {version}\n\
+Usage:\n\
+  ntu-tentacle                     Run the relay daemon (configured via environment variables)\n\
+  ntu-tentacle -r, --reload [NAME] Send SIGHUP to reload the running daemon for service NAME\n\
+                                   (falls back to NAUTROUDS_SERVICE_NAME etc. if NAME is omitted)\n\
+  ntu-tentacle -h, --help          Print this help message\n\
+  ntu-tentacle -V, --version       Print version information",
+        version = env!("CARGO_PKG_VERSION")
+    );
+}
+
+fn pid_file_path(service_name: &str) -> PathBuf {
+    Path::new(PID_DIR).join(format!("{service_name}.pid"))
+}
+
+fn write_pid_file(service_name: &str) {
+    if let Err(e) = std::fs::create_dir_all(PID_DIR) {
+        tracing::warn!(error = ?e, path = PID_DIR, "failed to create pid file directory");
+        return;
+    }
+
+    let path = pid_file_path(service_name);
+    if let Err(e) = std::fs::write(&path, std::process::id().to_string()) {
+        tracing::warn!(error = ?e, path = ?path, "failed to write pid file");
+    }
+}
+
+fn remove_pid_file_if_owned(service_name: &str) {
+    let path = pid_file_path(service_name);
+    let owned = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .is_some_and(|pid| pid == std::process::id());
+
+    if owned {
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+fn reload(service_name: &str) -> i32 {
+    let path = pid_file_path(service_name);
+
+    let pid_str = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: failed to read pid file {}: {e}", path.display());
+            return 1;
+        }
+    };
+
+    let pid: i32 = match pid_str.trim().parse() {
+        Ok(p) => p,
+        Err(_) => {
+            eprintln!("error: invalid pid in {}: {pid_str:?}", path.display());
+            return 1;
+        }
+    };
+
+    // SAFETY: kill(2) with a valid pid and SIGHUP has no memory-safety implications.
+    let ret = unsafe { libc::kill(pid, libc::SIGHUP) };
+    if ret == 0 {
+        println!("sent SIGHUP to ntu-tentacle (service '{service_name}', pid {pid})");
+        0
+    } else {
+        let err = std::io::Error::last_os_error();
+        eprintln!("error: failed to signal pid {pid}: {err}");
+        1
+    }
+}
+
+async fn run_daemon() -> Result<()> {
     // Initialize logging
     tracing_subscriber::fmt::init();
 
@@ -96,6 +212,10 @@ async fn main() -> Result<()> {
         relay.drain().await;
     }
 
+    if let Some(service_name) = current.first().map(|m| m.common.service_name.clone()) {
+        remove_pid_file_if_owned(&service_name);
+    }
+
     tracing::info!("ntu-tentacle stopped");
 
     Ok(())
@@ -115,6 +235,8 @@ async fn load_metadatas() -> Result<Vec<Metadata>> {
         tracing::error!(error = ?e, path = ?base_dir, "failed to create base directory");
         return Err(e.into());
     }
+
+    write_pid_file(&cfg.service_name);
 
     expand_targets(cfg).await
 }

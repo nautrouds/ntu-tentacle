@@ -3,9 +3,7 @@ use anyhow::{Result, anyhow};
 use std::env;
 use std::path::PathBuf;
 
-pub fn load() -> Result<Config> {
-    tracing::debug!("loading configuration from environment variables");
-
+pub fn service_name_from_env() -> Option<String> {
     let service_name_env_keys = [
         "NAUTROUDS_SERVICE_NAME",
         "NAUTROUDS_SERVICE_ID",
@@ -14,16 +12,21 @@ pub fn load() -> Result<Config> {
         "NAME",
     ];
 
-    let service_name: String = service_name_env_keys
+    service_name_env_keys
         .iter()
         .find_map(|key| env::var(key).ok())
-        .ok_or_else(|| {
-            tracing::error!(
-                var = "NAUTROUDS_SERVICE_NAME",
-                "missing required environment variable"
-            );
-            anyhow!("NAUTROUDS_SERVICE_NAME is required")
-        })?;
+}
+
+pub fn load() -> Result<Config> {
+    tracing::debug!("loading configuration from environment variables");
+
+    let service_name: String = service_name_from_env().ok_or_else(|| {
+        tracing::error!(
+            var = "NAUTROUDS_SERVICE_NAME",
+            "missing required environment variable"
+        );
+        anyhow!("NAUTROUDS_SERVICE_NAME is required")
+    })?;
 
     let base_dir: PathBuf = env::var("NAUTROUDS_SERVICES_DIR")
         .map(PathBuf::from)
