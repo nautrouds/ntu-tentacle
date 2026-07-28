@@ -49,7 +49,16 @@ impl Relay {
     }
 
     pub fn rotate_generation(&self, metadata: Metadata) {
-        self.generation.store(Arc::new(Generation::new(metadata)));
+        let current = self.generation.load();
+
+        let pool = if metadata.common.max_connections == current.metadata.common.max_connections {
+            current.pool.clone()
+        } else {
+            Arc::new(Semaphore::new(metadata.common.max_connections))
+        };
+
+        self.generation
+            .store(Arc::new(Generation { metadata, pool }));
     }
 
     pub fn shutdown(&self) {
@@ -190,5 +199,49 @@ impl Relay {
         self.stop_active_listener(&mut active);
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use metadata::CommonInfo;
+    use std::path::PathBuf;
+
+    fn metadata(max_connections: usize) -> Metadata {
+        Metadata {
+            common: Arc::new(CommonInfo {
+                max_connections,
+                service_name: "test".to_string(),
+                metrics_interval_secs: 1,
+            }),
+            socket_id: "test".to_string(),
+            socket_path: PathBuf::from("/tmp/test.sock"),
+            target_addr: "127.0.0.1:1".to_string(),
+            target_tls: crate::tls::Tls::default(),
+        }
+    }
+
+    #[test]
+    fn rotate_generation_reuses_pool_when_max_connections_unchanged() {
+        let relay = Relay::new(metadata(10));
+        let pool_before = relay.generation.load().pool.clone();
+
+        relay.rotate_generation(metadata(10));
+        let pool_after = relay.generation.load().pool.clone();
+
+        assert!(Arc::ptr_eq(&pool_before, &pool_after));
+    }
+
+    #[test]
+    fn rotate_generation_replaces_pool_when_max_connections_changed() {
+        let relay = Relay::new(metadata(10));
+        let pool_before = relay.generation.load().pool.clone();
+
+        relay.rotate_generation(metadata(20));
+        let pool_after = relay.generation.load().pool.clone();
+
+        assert!(!Arc::ptr_eq(&pool_before, &pool_after));
+        assert_eq!(pool_after.available_permits(), 20);
     }
 }
