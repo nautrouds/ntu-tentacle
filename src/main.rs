@@ -16,7 +16,11 @@ use std::sync::Arc;
 use tls::TlsManager;
 use tokio::task::JoinSet;
 
-const PID_DIR: &str = "/usr/local/tentacle";
+const DEFAULT_PID_DIR: &str = "/usr/local/tentacle";
+
+fn pid_dir() -> String {
+    config::env::pid_dir_from_env().unwrap_or_else(|| DEFAULT_PID_DIR.to_string())
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -32,22 +36,25 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         Some("-r") | Some("--reload") => {
-            let explicit = match args.get(2).map(String::as_str) {
-                Some(s) if !s.starts_with('-') => Some(s.to_string()),
+            let explicit_path = match args.get(2).map(String::as_str) {
+                Some(s) if !s.starts_with('-') => Some(PathBuf::from(s)),
                 _ => None,
             };
-            let service_name = explicit.or_else(config::env::service_name_from_env);
+            let path = explicit_path
+                .or_else(|| config::env::service_name_from_env().map(|name| pid_file_path(&name)));
 
-            let service_name = match service_name {
-                Some(s) => s,
+            let path = match path {
+                Some(p) => p,
                 None => {
-                    eprintln!("error: no service name given and none found in environment");
+                    eprintln!(
+                        "error: no pid file path given and no service name found in environment to derive one"
+                    );
                     print_help();
                     std::process::exit(1);
                 }
             };
 
-            std::process::exit(reload(&service_name));
+            std::process::exit(reload(&path));
         }
         Some(unknown) => {
             eprintln!("error: unknown option '{unknown}'");
@@ -65,8 +72,9 @@ fn print_help() {
         "tentacle {version}\n\
 Usage:\n\
   tentacle                     Run the relay daemon (configured via environment variables)\n\
-  tentacle -r, --reload [NAME] Send SIGHUP to reload the running daemon for service NAME\n\
-                                (falls back to NAUTROUDS_SERVICE_NAME etc. if NAME is omitted)\n\
+  tentacle -r, --reload [PATH] Send SIGHUP to the daemon whose pid file is at PATH\n\
+                                (defaults to the current service's pid file, derived from\n\
+                                the environment, if PATH is omitted)\n\
   tentacle -h, --help          Print this help message\n\
   tentacle -V, --version       Print version information",
         version = env!("CARGO_PKG_VERSION")
@@ -74,12 +82,13 @@ Usage:\n\
 }
 
 fn pid_file_path(service_name: &str) -> PathBuf {
-    Path::new(PID_DIR).join(format!("{service_name}.pid"))
+    Path::new(&pid_dir()).join(format!("{service_name}.pid"))
 }
 
 fn write_pid_file(service_name: &str) {
-    if let Err(e) = std::fs::create_dir_all(PID_DIR) {
-        tracing::warn!(error = ?e, path = PID_DIR, "failed to create pid file directory");
+    let dir = pid_dir();
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        tracing::warn!(error = ?e, path = dir, "failed to create pid file directory");
         return;
     }
 
@@ -101,10 +110,8 @@ fn remove_pid_file_if_owned(service_name: &str) {
     }
 }
 
-fn reload(service_name: &str) -> i32 {
-    let path = pid_file_path(service_name);
-
-    let pid_str = match std::fs::read_to_string(&path) {
+fn reload(path: &Path) -> i32 {
+    let pid_str = match std::fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("error: failed to read pid file {}: {e}", path.display());
@@ -123,7 +130,10 @@ fn reload(service_name: &str) -> i32 {
     // SAFETY: kill(2) with a valid pid and SIGHUP has no memory-safety implications.
     let ret = unsafe { libc::kill(pid, libc::SIGHUP) };
     if ret == 0 {
-        println!("sent SIGHUP to tentacle (service '{service_name}', pid {pid})");
+        println!(
+            "sent SIGHUP to tentacle (pid {pid}, pid file {})",
+            path.display()
+        );
         0
     } else {
         let err = std::io::Error::last_os_error();

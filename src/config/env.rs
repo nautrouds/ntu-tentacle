@@ -17,6 +17,10 @@ pub fn service_name_from_env() -> Option<String> {
         .find_map(|key| env::var(key).ok())
 }
 
+pub fn pid_dir_from_env() -> Option<String> {
+    env::var("NAUTROUDS_PID_DIR").ok()
+}
+
 pub fn load() -> Result<Config> {
     tracing::debug!("loading configuration from environment variables");
 
