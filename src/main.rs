@@ -22,35 +22,60 @@ async fn main() -> Result<()> {
 
     tracing::info!("ntu-tentacle starting");
 
-    let metadatas = load_metadatas().await?;
-
     let mut relays: HashMap<String, Arc<relay::Relay>> = HashMap::new();
     let mut tasks: JoinSet<()> = JoinSet::new();
+    let mut current: Vec<Metadata> = Vec::new();
+    let mut bootstrapped = false;
 
-    for metadata in metadatas {
-        let target_addr = metadata.target_addr.clone();
-        let r = Arc::new(relay::Relay::new(metadata));
-        relays.insert(target_addr.clone(), r.clone());
+    use tokio::signal::unix::{SignalKind, signal};
+    let mut sigterm = signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+    let mut sighup = signal(SignalKind::hangup()).expect("failed to install SIGHUP handler");
 
-        tasks.spawn(async move {
-            if let Err(e) = r.run().await {
-                tracing::error!(target = %target_addr, error = ?e, "runtime fatal error");
+    loop {
+        match load_metadatas().await {
+            Ok(metadatas) => {
+                for stale in Metadata::missing_targets(&current, &metadatas) {
+                    if let Some(r) = relays.remove(&stale.target_addr) {
+                        r.shutdown();
+                    }
+                }
+
+                for metadata in metadatas.iter().cloned() {
+                    let target_addr = metadata.target_addr.clone();
+                    match relays.get(&target_addr) {
+                        Some(existing) => existing.rotate_generation(metadata),
+                        None => {
+                            let r = Arc::new(relay::Relay::new(metadata));
+                            relays.insert(target_addr.clone(), r.clone());
+                            tasks.spawn(async move {
+                                if let Err(e) = r.run().await {
+                                    tracing::error!(target = %target_addr, error = ?e, "runtime fatal error");
+                                }
+                            });
+                        }
+                    }
+                }
+
+                current = metadatas;
+                bootstrapped = true;
             }
-        });
-    }
-
-    {
-        use tokio::signal::unix::{SignalKind, signal};
-
-        let mut sigterm =
-            signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+            Err(e) if !bootstrapped => return Err(e),
+            Err(e) => {
+                tracing::error!(error = ?e, "reload failed, keeping current configuration");
+            }
+        }
 
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 tracing::info!("received SIGINT, shutting down");
+                break;
             }
             _ = sigterm.recv() => {
                 tracing::info!("received SIGTERM, shutting down");
+                break;
+            }
+            _ = sighup.recv() => {
+                tracing::info!("received SIGHUP, reloading configuration");
             }
         }
     }
