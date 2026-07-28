@@ -92,6 +92,10 @@ async fn main() -> Result<()> {
         }
     }
 
+    for relay in relays.values() {
+        relay.drain().await;
+    }
+
     tracing::info!("ntu-tentacle stopped");
 
     Ok(())

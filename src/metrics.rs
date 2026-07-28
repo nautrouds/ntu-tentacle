@@ -74,6 +74,10 @@ impl MetricsManager {
         self.active_connections.fetch_sub(1, Ordering::Relaxed);
     }
 
+    pub fn active_connections(&self) -> u64 {
+        self.active_connections.load(Ordering::Relaxed)
+    }
+
     pub fn add_attempts_total(&self) {
         self.connection_attempts_total
             .fetch_add(1, Ordering::Relaxed);

@@ -65,6 +65,19 @@ impl Relay {
         let _ = self.shutdown_tx.send(());
     }
 
+    /// Waits for in-flight connections to finish instead of exit cutting them off mid-stream.
+    pub async fn drain(&self) {
+        let mut poll_interval = interval(Duration::from_millis(100));
+        loop {
+            let active = self.metrics.active_connections();
+            if active == 0 {
+                break;
+            }
+            debug!(active, "waiting for in-flight connections to drain");
+            poll_interval.tick().await;
+        }
+    }
+
     fn spawn_reporter(&self) {
         let metrics = self.metrics.clone();
         let mut shutdown_rx = self.shutdown_rx.clone();
