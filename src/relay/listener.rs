@@ -2,25 +2,26 @@ use crate::metrics::MetricsManager;
 use crate::tls::Tls;
 use crate::tracked_stream::TrackedStream;
 use anyhow::{Context, Result};
+use arc_swap::ArcSwap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::{AsyncRead, AsyncWrite, copy_bidirectional};
 use tokio::net::{TcpStream, UnixListener, UnixStream};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
+use tokio::sync::{OwnedSemaphorePermit, watch};
 use tracing::{debug, error, info};
 
-use super::metadata::Metadata;
+use super::Generation;
 
 pub(super) async fn run(
-    metadata: Arc<Metadata>,
-    pool: Arc<Semaphore>,
+    generation: Arc<ArcSwap<Generation>>,
     metrics: Arc<MetricsManager>,
     stop_rx: watch::Receiver<()>,
 ) -> Result<()> {
+    let metadata = &generation.load().metadata;
     let (listener, _guard) = bind_socket(&metadata.socket_path)?;
-    accept_loop(listener, metadata, pool, metrics, stop_rx).await
+    accept_loop(listener, generation, metrics, stop_rx).await
 }
 
 struct SocketGuard {
@@ -96,8 +97,7 @@ fn bind_socket(socket_path: &Path) -> Result<(UnixListener, SocketGuard)> {
 
 async fn accept_loop(
     listener: UnixListener,
-    metadata: Arc<Metadata>,
-    pool: Arc<Semaphore>,
+    generation: Arc<ArcSwap<Generation>>,
     metrics: Arc<MetricsManager>,
     mut stop_rx: watch::Receiver<()>,
 ) -> Result<()> {
@@ -106,6 +106,8 @@ async fn accept_loop(
             accept_res = listener.accept() => {
                 match accept_res {
                     Ok((uds_stream, addr)) => {
+                        let snapshot = generation.load_full();
+                        let pool = snapshot.pool.clone();
                         // Blocks/queues here once the pool is full, until a permit frees up.
                         let permit = match pool.clone().acquire_owned().await {
                             Ok(p) => p,
@@ -114,6 +116,8 @@ async fn accept_loop(
                                 break;
                             }
                         };
+
+                        let metadata = &snapshot.metadata;
 
                         debug!(
                             client = ?addr,
