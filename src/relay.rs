@@ -32,14 +32,19 @@ impl Generation {
 pub struct Relay {
     generation: Arc<ArcSwap<Generation>>,
     metrics: Arc<MetricsManager>,
+    shutdown_tx: watch::Sender<()>,
+    shutdown_rx: watch::Receiver<()>,
 }
 
 impl Relay {
     pub fn new(metadata: Metadata) -> Self {
         let metrics = Arc::new(MetricsManager::new());
+        let (shutdown_tx, shutdown_rx) = watch::channel(());
         Self {
             generation: Arc::new(ArcSwap::from_pointee(Generation::new(metadata))),
             metrics,
+            shutdown_tx,
+            shutdown_rx,
         }
     }
 
@@ -47,15 +52,20 @@ impl Relay {
         self.generation.store(Arc::new(Generation::new(metadata)));
     }
 
+    pub fn shutdown(&self) {
+        let _ = self.shutdown_tx.send(());
+    }
+
     fn spawn_reporter(&self) {
         let metrics = self.metrics.clone();
+        let mut shutdown_rx = self.shutdown_rx.clone();
 
         let metadata = &self.generation.load().metadata;
         let socket_id = metadata.socket_id.clone();
         let socket_path = metadata.socket_path.clone();
         let service_name = metadata.common.service_name.clone();
         let metrics_interval_secs = metadata.common.metrics_interval_secs;
-        drop(metadata);
+        let _ = metadata;
         let mut metrics_interval = interval(Duration::from_secs(metrics_interval_secs));
 
         tokio::spawn(async move {
@@ -63,13 +73,24 @@ impl Relay {
             let mut buf = Vec::new();
             let mut frame = Vec::new();
             loop {
-                metrics_interval.tick().await;
-
-                if let Err(e) =
-                    Self::push_metrics_once(&metrics, &socket_path, &mut snap, &mut buf, &mut frame)
+                tokio::select! {
+                    _ = metrics_interval.tick() => {
+                        if let Err(e) = Self::push_metrics_once(
+                            &metrics,
+                            &socket_path,
+                            &mut snap,
+                            &mut buf,
+                            &mut frame,
+                        )
                         .await
-                {
-                    debug!(error = ?e, "metrics push skipped or failed, data will accumulate");
+                        {
+                            debug!(error = ?e, "metrics push skipped or failed, data will accumulate");
+                        }
+                    }
+                    _ = shutdown_rx.changed() => {
+                        debug!("metrics reporter stopping");
+                        break;
+                    }
                 }
             }
         });
@@ -101,9 +122,26 @@ impl Relay {
         }
     }
 
+    fn stop_active_listener(
+        &self,
+        active: &mut Option<(tokio::task::JoinHandle<()>, watch::Sender<()>)>,
+    ) {
+        if let Some((_handle, stop_tx)) = active.take() {
+            let metadata = &self.generation.load().metadata;
+
+            // Unlink first so new connect() attempts fail fast instead of racing the stop signal.
+            listener::unlink_socket(&metadata.socket_path);
+
+            // No abort(): dropping the handle detaches the task, letting it drain accept_loop itself.
+            let _ = stop_tx.send(());
+            debug!("stop signal sent, listener detached to drain");
+        }
+    }
+
     pub async fn run(&self) -> Result<()> {
         let mut check_interval = interval(Duration::from_secs(2));
         let mut active: Option<(tokio::task::JoinHandle<()>, watch::Sender<()>)> = None;
+        let mut shutdown_rx = self.shutdown_rx.clone();
 
         self.spawn_reporter();
 
@@ -117,37 +155,40 @@ impl Relay {
         }
 
         loop {
-            check_interval.tick().await;
+            tokio::select! {
+                _ = check_interval.tick() => {
+                    let generation = self.generation.load_full();
+                    let metadata = &generation.metadata;
+                    let is_alive = probe::probe(&metadata.target_addr).await;
+                    debug!(target = %metadata.target_addr, alive = is_alive, "health probe result");
 
-            let generation = self.generation.load_full();
-            let metadata = &generation.metadata;
-            let is_alive = probe::probe(&metadata.target_addr).await;
-            debug!(target = %metadata.target_addr, alive = is_alive, "health probe result");
+                    if is_alive && active.is_none() {
+                        info!(target = %metadata.target_addr, "target online, starting listener");
+                        let generation_handle = self.generation.clone();
+                        let metrics = self.metrics.clone();
+                        let (stop_tx, stop_rx) = watch::channel(());
 
-            if is_alive && active.is_none() {
-                info!(target = %metadata.target_addr, "target online, starting listener");
-                let generation_handle = self.generation.clone();
-                let metrics = self.metrics.clone();
-                let (stop_tx, stop_rx) = watch::channel(());
-
-                let handle = tokio::spawn(async move {
-                    #[cfg(unix)]
-                    if let Err(e) = listener::run(generation_handle, metrics, stop_rx).await {
-                        error!(error = ?e, "uds listener failure");
+                        let handle = tokio::spawn(async move {
+                            #[cfg(unix)]
+                            if let Err(e) = listener::run(generation_handle, metrics, stop_rx).await {
+                                error!(error = ?e, "uds listener failure");
+                            }
+                        });
+                        active = Some((handle, stop_tx));
+                    } else if !is_alive && active.is_some() {
+                        warn!(target = %metadata.target_addr, "target offline, stopping listener");
+                        self.stop_active_listener(&mut active);
                     }
-                });
-                active = Some((handle, stop_tx));
-            } else if !is_alive && active.is_some() {
-                warn!(target = %metadata.target_addr, "target offline, stopping listener");
-                if let Some((_handle, stop_tx)) = active.take() {
-                    // Unlink first so new connect() attempts fail fast instead of racing the stop signal.
-                    listener::unlink_socket(&metadata.socket_path);
-
-                    // No abort(): dropping the handle detaches the task, letting it drain accept_loop itself.
-                    let _ = stop_tx.send(());
-                    debug!("stop signal sent, listener detached to drain");
+                }
+                _ = shutdown_rx.changed() => {
+                    info!("shutdown requested, stopping relay");
+                    break;
                 }
             }
         }
+
+        self.stop_active_listener(&mut active);
+
+        Ok(())
     }
 }
