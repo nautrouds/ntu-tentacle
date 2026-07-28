@@ -65,6 +65,8 @@ async fn main() -> Result<()> {
             }
         }
 
+        while tasks.try_join_next().is_some() {}
+
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 tracing::info!("received SIGINT, shutting down");
