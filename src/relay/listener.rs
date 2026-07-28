@@ -108,34 +108,31 @@ async fn accept_loop(
                     Ok((uds_stream, addr)) => {
                         let snapshot = generation.load_full();
                         let pool = snapshot.pool.clone();
-                        // Blocks/queues here once the pool is full, until a permit frees up.
-                        let permit = match pool.clone().acquire_owned().await {
-                            Ok(p) => p,
-                            Err(_) => {
-                                error!("connection pool semaphore exhausted");
-                                break;
-                            }
-                        };
-
                         let metadata = &snapshot.metadata;
-
-                        debug!(
-                            client = ?addr,
-                            active_conns = metadata.common.max_connections - pool.available_permits(),
-                            "connection accepted"
-                        );
-
                         let metrics = metrics.clone();
                         let target_addr = metadata.target_addr.clone();
                         let target_tls = metadata.target_tls.clone();
+                        let max_connections = metadata.common.max_connections;
 
-                        tokio::spawn(handle_connection(
-                            uds_stream,
-                            permit,
-                            metrics,
-                            target_addr,
-                            target_tls,
-                        ));
+                        // Acquired in the spawned task, not here, so a full pool can't stall accept_loop.
+                        tokio::spawn(async move {
+                            let permit = match pool.clone().acquire_owned().await {
+                                Ok(p) => p,
+                                Err(_) => {
+                                    error!("connection pool semaphore closed");
+                                    return;
+                                }
+                            };
+
+                            debug!(
+                                client = ?addr,
+                                active_conns = max_connections - pool.available_permits(),
+                                "connection accepted"
+                            );
+
+                            handle_connection(uds_stream, permit, metrics, target_addr, target_tls)
+                                .await;
+                        });
                     }
                     Err(e) => {
                         error!(error = ?e, "uds accept failure");
