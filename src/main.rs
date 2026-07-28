@@ -20,21 +20,7 @@ async fn main() -> Result<()> {
 
     tracing::info!("ntu-tentacle starting");
 
-    let cfg = match config::load() {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::error!(error = ?e, "initialization failed: configuration error");
-            return Err(e);
-        }
-    };
-
-    let base_dir = cfg.base_dir.clone();
-    if let Err(e) = std::fs::create_dir_all(&base_dir) {
-        tracing::error!(error = ?e, path = ?base_dir, "failed to create base directory");
-        return Err(e.into());
-    }
-
-    let metadatas = expand_targets(cfg).await?;
+    let metadatas = load_metadatas().await?;
 
     let handles: Vec<_> = metadatas
         .into_iter()
@@ -52,6 +38,24 @@ async fn main() -> Result<()> {
     futures::future::join_all(handles).await;
 
     Ok(())
+}
+
+async fn load_metadatas() -> Result<Vec<Metadata>> {
+    let cfg = match config::load() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = ?e, "initialization failed: configuration error");
+            return Err(e);
+        }
+    };
+
+    let base_dir = cfg.base_dir.clone();
+    if let Err(e) = std::fs::create_dir_all(&base_dir) {
+        tracing::error!(error = ?e, path = ?base_dir, "failed to create base directory");
+        return Err(e.into());
+    }
+
+    expand_targets(cfg).await
 }
 
 async fn expand_targets(config: Config) -> Result<Vec<Metadata>> {
