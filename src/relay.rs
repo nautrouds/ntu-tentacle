@@ -110,25 +110,25 @@ impl Relay {
     fn spawn_reporter(&self) {
         let metrics = self.metrics.clone();
         let mut shutdown_rx = self.shutdown_rx.clone();
+        let generation = self.generation.clone();
 
         let metadata = &self.generation.load().metadata;
-        let socket_id = metadata.socket_id.clone();
-        let socket_path = metadata.socket_path.clone();
         let service_name = metadata.common.service_name.clone();
         let metrics_interval_secs = metadata.common.metrics_interval_secs;
-        let _ = metadata;
         let mut metrics_interval = interval(Duration::from_secs(metrics_interval_secs));
 
         tokio::spawn(async move {
-            let mut snap = MetricsSnapshot::default(socket_id, service_name);
+            let mut snap = MetricsSnapshot::default(String::new(), service_name);
             let mut buf = Vec::new();
             let mut frame = Vec::new();
             loop {
                 tokio::select! {
                     _ = metrics_interval.tick() => {
+                        let current = generation.load_full();
+                        snap.tentacle_id.clone_from(&current.metadata.socket_id);
                         if let Err(e) = Self::push_metrics_once(
                             &metrics,
-                            &socket_path,
+                            &current.metadata.socket_path,
                             &mut snap,
                             &mut buf,
                             &mut frame,
