@@ -3,6 +3,7 @@ use crate::metrics::MetricsSnapshot;
 use anyhow::Context;
 use anyhow::Result;
 use arc_swap::ArcSwap;
+use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -50,6 +51,34 @@ impl Relay {
 
     pub fn rotate_generation(&self, metadata: Metadata) {
         let current = self.generation.load();
+
+        if metadata.socket_path != current.metadata.socket_path {
+            match fs::rename(&current.metadata.socket_path, &metadata.socket_path) {
+                Ok(()) => {
+                    info!(
+                        old_path = ?current.metadata.socket_path,
+                        new_path = ?metadata.socket_path,
+                        "renamed socket for updated path"
+                    );
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    debug!(
+                        old_path = ?current.metadata.socket_path,
+                        new_path = ?metadata.socket_path,
+                        "no socket at old path to rename, will bind fresh at new path"
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        old_path = ?current.metadata.socket_path,
+                        new_path = ?metadata.socket_path,
+                        error = ?e,
+                        "failed to rename socket for updated path, keeping previous generation"
+                    );
+                    return;
+                }
+            }
+        }
 
         let pool = if metadata.common.max_connections == current.metadata.common.max_connections {
             current.pool.clone()

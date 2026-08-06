@@ -158,6 +158,7 @@ impl TlsManager {
     pub async fn fetch(&self, target: Target) -> Result<(String, Tls)> {
         let Target {
             addr,
+            weight: _,
             ca,
             cert,
             key,

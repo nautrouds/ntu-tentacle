@@ -7,7 +7,8 @@ use std::fs;
 use std::path::PathBuf;
 
 #[derive(Debug, Deserialize, Default)]
-struct TargetTlsRaw {
+struct TargetRaw {
+    weight: Option<u32>,
     ca: Option<PathBuf>,
     cert: Option<PathBuf>,
     key: Option<PathBuf>,
@@ -35,11 +36,16 @@ pub fn load(cfg: Config) -> Result<Config> {
                 };
                 let addr = target.to_string();
 
-                let TargetTlsRaw { ca, cert, key } =
-                    serde_yaml::from_value::<TargetTlsRaw>(v.clone()).unwrap_or_default();
+                let TargetRaw {
+                    weight,
+                    ca,
+                    cert,
+                    key,
+                } = serde_yaml::from_value::<TargetRaw>(v.clone()).unwrap_or_default();
 
                 targets.push(Target {
                     addr,
+                    weight,
                     ca,
                     cert,
                     key,
