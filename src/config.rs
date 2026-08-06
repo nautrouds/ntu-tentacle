@@ -11,6 +11,8 @@ pub struct Target {
 }
 
 impl Target {
+    pub const MAX_WEIGHT: u32 = 100;
+
     pub fn from(addr: String) -> Self {
         Self {
             addr,
@@ -23,6 +25,10 @@ impl Target {
 
     pub fn tls_pair_is_valid(&self) -> bool {
         self.cert.is_some() == self.key.is_some()
+    }
+
+    pub fn weight_in_range(&self) -> bool {
+        self.weight.is_none_or(|w| (1..=Self::MAX_WEIGHT).contains(&w))
     }
 }
 
