@@ -264,6 +264,26 @@ mod tests {
         }
     }
 
+    fn metadata_with_path(max_connections: usize, socket_path: PathBuf) -> Metadata {
+        Metadata {
+            socket_path,
+            ..metadata(max_connections)
+        }
+    }
+
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "tentacle-test-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
     #[test]
     fn rotate_generation_reuses_pool_when_max_connections_unchanged() {
         let relay = Relay::new(metadata(10));
@@ -285,5 +305,54 @@ mod tests {
 
         assert!(!Arc::ptr_eq(&pool_before, &pool_after));
         assert_eq!(pool_after.available_permits(), 20);
+    }
+
+    #[test]
+    fn rotate_generation_renames_socket_when_path_changes() {
+        let dir = unique_temp_dir("rename-ok");
+        let old_path = dir.join("old.sock");
+        let new_path = dir.join("new.sock");
+        std::fs::write(&old_path, b"").unwrap();
+
+        let relay = Relay::new(metadata_with_path(10, old_path.clone()));
+        relay.rotate_generation(metadata_with_path(10, new_path.clone()));
+
+        assert!(!old_path.exists());
+        assert!(new_path.exists());
+        assert_eq!(relay.generation.load().metadata.socket_path, new_path);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rotate_generation_applies_when_old_path_never_created() {
+        let dir = unique_temp_dir("rename-missing");
+        let old_path = dir.join("old.sock");
+        let new_path = dir.join("new.sock");
+
+        let relay = Relay::new(metadata_with_path(10, old_path));
+        relay.rotate_generation(metadata_with_path(10, new_path.clone()));
+
+        assert!(!new_path.exists());
+        assert_eq!(relay.generation.load().metadata.socket_path, new_path);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rotate_generation_cancels_when_rename_onto_existing_dir_fails() {
+        let dir = unique_temp_dir("rename-fail");
+        let old_path = dir.join("old.sock");
+        let new_path = dir.join("new_dir");
+        std::fs::write(&old_path, b"").unwrap();
+        std::fs::create_dir(&new_path).unwrap();
+
+        let relay = Relay::new(metadata_with_path(10, old_path.clone()));
+        relay.rotate_generation(metadata_with_path(10, new_path.clone()));
+
+        assert_eq!(relay.generation.load().metadata.socket_path, old_path);
+        assert!(old_path.exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
