@@ -52,14 +52,17 @@ docker build -f docker/Dockerfile -t ntu-tentacle .
 | `NAUTROUDS_METRICS_INTERVAL_SECS` | 兩次 metrics 推送之間的間隔秒數 | `15` |
 | `NAUTROUDS_PID_DIR` | `<service_name>.pid` 檔案寫入的目錄 | `/usr/local/tentacle` |
 
-### Targets YAML 檔（選填，用於 per-target TLS 設定）
+### Targets YAML 檔（選填，用於 per-target TLS 與權重設定）
 
-設定 targets 檔會**完全取代**由環境變數解析出的 target 清單。內容是一個 YAML mapping，key 為 target 位址，value 為選填的 TLS 設定；`cert` 與 `key` 必須同時設定或同時省略，若只設定其中一個，該 target 會被跳過並記錄 warning，不會導致啟動失敗。
+設定 targets 檔會**完全取代**由環境變數解析出的 target 清單。
+內容是一個 YAML mapping，key 為 target 位址，value 為選填設定；`cert` 與 `key` 必須同時設定或同時省略，若只設定其中一個，該 target 會被跳過並記錄 warning，不會導致啟動失敗。
+`weight` 用於設定該 target 在 nautrouds 端的負載平衡權重（會編碼成 socket 檔名的 `@<weight>` 後綴），必須是 `[1, 100]` 範圍內的整數，缺省時預設為 1。
 
 ```yaml
 localhost:8080: {}
 
 api.internal:9090:
+  weight: 5
   ca: /etc/ntu-tentacle/certs/ca.pem
 
 secure-backend:9443:

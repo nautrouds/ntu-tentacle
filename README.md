@@ -52,14 +52,17 @@ Configuration is read from environment variables.
 | `NAUTROUDS_METRICS_INTERVAL_SECS` | Interval, in seconds, between metrics pushes | `15` |
 | `NAUTROUDS_PID_DIR` | Directory where the `<service_name>.pid` file is written | `/usr/local/tentacle` |
 
-### Targets YAML file (optional, for per-target TLS)
+### Targets YAML file (optional, for per-target TLS and weight)
 
-Setting a targets file **completely replaces** the target list derived from environment variables. It is a YAML mapping of target address to an optional TLS configuration; `cert` and `key` must both be set or both omitted — a target with only one of them set is skipped (with a warning logged) rather than failing startup.
+Setting a targets file **completely replaces** the target list derived from environment variables.
+It is a YAML mapping of target address to an optional configuration; `cert` and `key` must both be set or both omitted — a target with only one of them set is skipped (with a warning logged) rather than failing startup.
+`weight` sets the target's load-balancing weight on the nautrouds side (encoded as a `@<weight>` suffix on the socket filename); it must be an integer in `[1, 100]` and defaults to 1 when omitted.
 
 ```yaml
 localhost:8080: {}
 
 api.internal:9090:
+  weight: 5
   ca: /etc/ntu-tentacle/certs/ca.pem
 
 secure-backend:9443:
