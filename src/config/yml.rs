@@ -23,13 +23,22 @@ fn parse_weight(addr: &str, raw: Option<Value>) -> Option<u32> {
     };
 
     if n <= 0 {
-        tracing::warn!(target = addr, weight = n, "weight must be positive, ignoring");
+        tracing::warn!(
+            target = addr,
+            weight = n,
+            "weight must be positive, ignoring"
+        );
         return None;
     }
 
     let max = Target::MAX_WEIGHT as i64;
     if n > max {
-        tracing::warn!(target = addr, weight = n, max, "weight exceeds max, clamping");
+        tracing::warn!(
+            target = addr,
+            weight = n,
+            max,
+            "weight exceeds max, clamping"
+        );
         return Some(Target::MAX_WEIGHT);
     }
 
