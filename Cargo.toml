@@ -4,7 +4,7 @@ version = "0.6.0"
 edition = "2024"
 
 [package.metadata.nautrouds]
-min_core_ref = "26070722-9237c47"
+min_core_ref = "26080503-68f1f82"
 
 [[bin]]
 name = "tentacle"
