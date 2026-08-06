@@ -166,11 +166,14 @@ async fn run_daemon() -> Result<()> {
                     }
                 }
 
-                for metadata in metadatas.iter().cloned() {
+                let mut next_current = Vec::with_capacity(metadatas.len());
+
+                for metadata in metadatas {
                     let target_addr = metadata.target_addr.clone();
                     match relays.get(&target_addr) {
-                        Some(existing) => existing.rotate_generation(metadata),
+                        Some(existing) => next_current.push(existing.rotate_generation(metadata)),
                         None => {
+                            next_current.push(metadata.clone());
                             let r = Arc::new(relay::Relay::new(metadata));
                             relays.insert(target_addr.clone(), r.clone());
                             tasks.spawn(async move {
@@ -182,7 +185,7 @@ async fn run_daemon() -> Result<()> {
                     }
                 }
 
-                current = metadatas;
+                current = next_current;
                 bootstrapped = true;
             }
             Err(e) if !bootstrapped => return Err(e),

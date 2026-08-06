@@ -49,7 +49,7 @@ impl Relay {
         }
     }
 
-    pub fn rotate_generation(&self, metadata: Metadata) {
+    pub fn rotate_generation(&self, metadata: Metadata) -> Metadata {
         let current = self.generation.load();
 
         if metadata.socket_path != current.metadata.socket_path {
@@ -75,7 +75,7 @@ impl Relay {
                         error = ?e,
                         "failed to rename socket for updated path, keeping previous generation"
                     );
-                    return;
+                    return current.metadata.clone();
                 }
             }
         }
@@ -86,8 +86,10 @@ impl Relay {
             Arc::new(Semaphore::new(metadata.common.max_connections))
         };
 
+        let applied = metadata.clone();
         self.generation
             .store(Arc::new(Generation { metadata, pool }));
+        applied
     }
 
     pub fn shutdown(&self) {
