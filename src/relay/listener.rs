@@ -19,31 +19,35 @@ pub(super) async fn run(
     metrics: Arc<MetricsManager>,
     stop_rx: watch::Receiver<()>,
 ) -> Result<()> {
-    let metadata = &generation.load().metadata;
-    let (listener, _guard) = bind_socket(&metadata.socket_path)?;
+    let (listener, _guard) = bind_socket(generation.clone())?;
     accept_loop(listener, generation, metrics, stop_rx).await
 }
 
 struct SocketGuard {
-    path: PathBuf,
+    generation: Arc<ArcSwap<Generation>>,
     dev: u64,
     ino: u64,
 }
 
 impl SocketGuard {
-    fn new(path: PathBuf) -> Result<Self> {
+    fn new(generation: Arc<ArcSwap<Generation>>) -> Result<Self> {
         use std::os::unix::fs::MetadataExt;
+        let path = generation.load().metadata.socket_path.clone();
         let meta = fs::metadata(&path).context("failed to stat freshly bound UDS")?;
         Ok(Self {
-            path,
+            generation,
             dev: meta.dev(),
             ino: meta.ino(),
         })
     }
 
-    fn owns_current_file(&self) -> bool {
+    fn current_path(&self) -> PathBuf {
+        self.generation.load().metadata.socket_path.clone()
+    }
+
+    fn owns_current_file(&self, path: &Path) -> bool {
         use std::os::unix::fs::MetadataExt;
-        fs::metadata(&self.path)
+        fs::metadata(path)
             .map(|m| m.dev() == self.dev && m.ino() == self.ino)
             .unwrap_or(false)
     }
@@ -51,11 +55,12 @@ impl SocketGuard {
 
 impl Drop for SocketGuard {
     fn drop(&mut self) {
-        if self.owns_current_file() {
-            info!(path = ?self.path, "cleaning up socket file");
-            unlink_socket(&self.path);
+        let path = self.current_path();
+        if self.owns_current_file(&path) {
+            info!(path = ?path, "cleaning up socket file");
+            unlink_socket(&path);
         } else {
-            debug!(path = ?self.path, "socket no longer belongs to this listener, skip cleanup");
+            debug!(path = ?path, "socket no longer belongs to this listener, skip cleanup");
         }
     }
 }
@@ -65,7 +70,8 @@ pub(super) fn unlink_socket(path: &Path) {
     let _ = fs::remove_file(path);
 }
 
-fn bind_socket(socket_path: &Path) -> Result<(UnixListener, SocketGuard)> {
+fn bind_socket(generation: Arc<ArcSwap<Generation>>) -> Result<(UnixListener, SocketGuard)> {
+    let socket_path = generation.load().metadata.socket_path.clone();
     let temp_socket_path = socket_path.with_extension("tmp");
 
     debug!(path = ?socket_path, "binding unix domain socket");
@@ -78,7 +84,7 @@ fn bind_socket(socket_path: &Path) -> Result<(UnixListener, SocketGuard)> {
     }
 
     unlink_socket(&temp_socket_path);
-    unlink_socket(socket_path);
+    unlink_socket(&socket_path);
 
     let listener = UnixListener::bind(&temp_socket_path).context("Failed to bind UDS")?;
 
@@ -87,11 +93,11 @@ fn bind_socket(socket_path: &Path) -> Result<(UnixListener, SocketGuard)> {
         fs::set_permissions(&temp_socket_path, fs::Permissions::from_mode(0o666))?;
     }
 
-    fs::rename(&temp_socket_path, socket_path).context("Failed to rename UDS")?;
+    fs::rename(&temp_socket_path, &socket_path).context("Failed to rename UDS")?;
 
     info!(path = ?socket_path, "uds listener active");
 
-    let guard = SocketGuard::new(socket_path.to_path_buf())?;
+    let guard = SocketGuard::new(generation)?;
     Ok((listener, guard))
 }
 
