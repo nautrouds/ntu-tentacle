@@ -281,17 +281,8 @@ async fn expand_targets(config: Config) -> Result<Vec<Metadata>> {
             continue;
         }
 
-        if !target.weight_in_range() {
-            tracing::warn!(
-                target = %target.addr,
-                weight = target.weight,
-                max = config::Target::MAX_WEIGHT,
-                "weight out of range [1, max], ignoring and falling back to default weight"
-            );
-        }
-
         let socket_id = target.addr.replace([':', '/'], "_");
-        let socket_name = match target.weight.filter(|_| target.weight_in_range()) {
+        let socket_name = match target.weight {
             Some(weight) if weight > 1 => format!("{socket_id}@{weight}.sock"),
             _ => format!("{socket_id}.sock"),
         };

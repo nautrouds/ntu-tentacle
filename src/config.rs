@@ -26,10 +26,6 @@ impl Target {
     pub fn tls_pair_is_valid(&self) -> bool {
         self.cert.is_some() == self.key.is_some()
     }
-
-    pub fn weight_in_range(&self) -> bool {
-        self.weight.is_none_or(|w| (1..=Self::MAX_WEIGHT).contains(&w))
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -56,37 +52,4 @@ pub fn load() -> Result<Config> {
     }
 
     Ok(config)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn target_with_weight(weight: Option<u32>) -> Target {
-        Target {
-            weight,
-            ..Target::from("localhost:8080".to_string())
-        }
-    }
-
-    #[test]
-    fn weight_in_range_accepts_none() {
-        assert!(target_with_weight(None).weight_in_range());
-    }
-
-    #[test]
-    fn weight_in_range_accepts_bounds() {
-        assert!(target_with_weight(Some(1)).weight_in_range());
-        assert!(target_with_weight(Some(Target::MAX_WEIGHT)).weight_in_range());
-    }
-
-    #[test]
-    fn weight_in_range_rejects_zero() {
-        assert!(!target_with_weight(Some(0)).weight_in_range());
-    }
-
-    #[test]
-    fn weight_in_range_rejects_above_max() {
-        assert!(!target_with_weight(Some(Target::MAX_WEIGHT + 1)).weight_in_range());
-    }
 }
