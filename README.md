@@ -50,6 +50,7 @@ Configuration is read from environment variables.
 | `NAUTROUDS_SERVICES_DIR` | Base directory under which service socket directories are created | `/var/run/nautrouds/services` |
 | `NAUTROUDS_MAX_CONNS` | Maximum concurrent connections per target | `1024` |
 | `NAUTROUDS_METRICS_INTERVAL_SECS` | Interval, in seconds, between metrics pushes | `15` |
+| `NAUTROUDS_METRICS_SOCKET` | Metrics collector socket path, relative to `NAUTROUDS_SERVICES_DIR`. Set to `-` to disable metrics pushing. | *(empty, resolves to `metrics.sock`)* |
 | `NAUTROUDS_PID_DIR` | Directory where the `<service_name>.pid` file is written | `/usr/local/tentacle` |
 
 ### Targets YAML file (optional, for per-target TLS and weight)

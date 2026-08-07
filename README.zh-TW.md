@@ -50,6 +50,7 @@ docker build -f docker/Dockerfile -t ntu-tentacle .
 | `NAUTROUDS_SERVICES_DIR` | 建立服務 socket 目錄的根目錄 | `/var/run/nautrouds/services` |
 | `NAUTROUDS_MAX_CONNS` | 每個 target 的最大同時連線數 | `1024` |
 | `NAUTROUDS_METRICS_INTERVAL_SECS` | 兩次 metrics 推送之間的間隔秒數 | `15` |
+| `NAUTROUDS_METRICS_SOCKET` | Metrics collector socket 路徑，相對於 `NAUTROUDS_SERVICES_DIR`。設為 `-` 可停用 metrics 推送。 | *(空字串，解析為 `metrics.sock`)* |
 | `NAUTROUDS_PID_DIR` | `<service_name>.pid` 檔案寫入的目錄 | `/usr/local/tentacle` |
 
 ### Targets YAML 檔（選填，用於 per-target TLS 與權重設定）
