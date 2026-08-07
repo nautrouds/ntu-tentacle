@@ -110,11 +110,16 @@ impl Relay {
     }
 
     fn spawn_reporter(&self) {
+        let metadata = &self.generation.load().metadata;
+        let Some(metrics_socket_path) = metadata.common.metrics_socket_path.clone() else {
+            debug!("metrics socket disabled, reporter not started");
+            return;
+        };
+
         let metrics = self.metrics.clone();
         let mut shutdown_rx = self.shutdown_rx.clone();
         let generation = self.generation.clone();
 
-        let metadata = &self.generation.load().metadata;
         let service_name = metadata.common.service_name.clone();
         let metrics_interval_secs = metadata.common.metrics_interval_secs;
         let mut metrics_interval = interval(Duration::from_secs(metrics_interval_secs));
@@ -130,7 +135,7 @@ impl Relay {
                         snap.tentacle_id.clone_from(&current.metadata.socket_id);
                         if let Err(e) = Self::push_metrics_once(
                             &metrics,
-                            &current.metadata.socket_path,
+                            &metrics_socket_path,
                             &mut snap,
                             &mut buf,
                             &mut frame,
