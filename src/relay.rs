@@ -39,7 +39,9 @@ pub struct Relay {
 
 impl Relay {
     pub fn new(metadata: Metadata) -> Self {
-        let metrics = Arc::new(MetricsManager::new());
+        let metrics = Arc::new(MetricsManager::new(
+            metadata.common.metrics_socket_path.is_some(),
+        ));
         let (shutdown_tx, shutdown_rx) = watch::channel(());
         Self {
             generation: Arc::new(ArcSwap::from_pointee(Generation::new(metadata))),

@@ -206,7 +206,7 @@ async fn handle_connection(
 
 fn report_latency(metrics: &Arc<MetricsManager>, start: Instant) {
     let latency_us = start.elapsed().as_micros() as u64;
-    MetricsManager::observe_duration(&metrics.transport_latency_seconds, latency_us);
+    metrics.observe_duration(latency_us);
 }
 
 async fn relay<S>(uds_stream: UnixStream, mut upstream: S, metrics: &Arc<MetricsManager>)

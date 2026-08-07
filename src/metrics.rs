@@ -21,11 +21,12 @@ fn init_atomic_buckets() -> [AtomicU64; BUCKET_COUNT] {
 }
 
 pub struct MetricsManager {
+    enabled: bool,
     active_connections: AtomicU64,
     connection_attempts_total: AtomicU64,
     connection_failures_total: AtomicU64,
     bytes_transmitted_total: AtomicU64,
-    pub transport_latency_seconds: [AtomicU64; BUCKET_COUNT],
+    transport_latency_seconds: [AtomicU64; BUCKET_COUNT],
 }
 
 pub struct MetricsSnapshot {
@@ -56,8 +57,9 @@ impl MetricsSnapshot {
 }
 
 impl MetricsManager {
-    pub fn new() -> Self {
+    pub fn new(enabled: bool) -> Self {
         Self {
+            enabled,
             active_connections: AtomicU64::new(0),
             connection_attempts_total: AtomicU64::new(0),
             connection_failures_total: AtomicU64::new(0),
@@ -79,26 +81,38 @@ impl MetricsManager {
     }
 
     pub fn add_attempts_total(&self) {
+        if !self.enabled {
+            return;
+        }
         self.connection_attempts_total
             .fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn add_failures_total(&self) {
+        if !self.enabled {
+            return;
+        }
         self.connection_failures_total
             .fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn add_bytes_transmitted_total(&self, bytes: u64) {
+        if !self.enabled {
+            return;
+        }
         self.bytes_transmitted_total
             .fetch_add(bytes, Ordering::Relaxed);
     }
 
-    pub fn observe_duration(buckets: &[AtomicU64; BUCKET_COUNT], duration: u64) {
+    pub fn observe_duration(&self, duration: u64) {
+        if !self.enabled {
+            return;
+        }
         let idx = BUCKET_BOUNDARIES_US
             .iter()
             .position(|&le| duration <= le)
             .unwrap_or(BUCKET_BOUNDARIES_US.len());
-        for bucket in buckets.iter().skip(idx) {
+        for bucket in self.transport_latency_seconds.iter().skip(idx) {
             bucket.fetch_add(1, Ordering::Relaxed);
         }
     }
