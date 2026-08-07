@@ -8,6 +8,7 @@ pub struct CommonInfo {
     pub max_connections: usize,
     pub service_name: String,
     pub metrics_interval_secs: u64,
+    pub metrics_socket_path: Option<PathBuf>,
 }
 
 #[derive(Clone)]
@@ -40,6 +41,7 @@ mod tests {
                 max_connections: 1,
                 service_name: "test".to_string(),
                 metrics_interval_secs: 1,
+                metrics_socket_path: None,
             }),
             socket_id: target_addr.replace([':', '/'], "_"),
             socket_path: PathBuf::from(format!("/tmp/{target_addr}.sock")),

@@ -258,6 +258,7 @@ mod tests {
                 max_connections,
                 service_name: "test".to_string(),
                 metrics_interval_secs: 1,
+                metrics_socket_path: None,
             }),
             socket_id: "test".to_string(),
             socket_path: PathBuf::from("/tmp/test.sock"),

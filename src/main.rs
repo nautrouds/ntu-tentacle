@@ -261,12 +261,14 @@ async fn expand_targets(config: Config) -> Result<Vec<Metadata>> {
         base_dir,
         max_connections,
         metrics_interval_secs,
+        metrics_socket_path,
     } = config;
 
     let common = Arc::new(CommonInfo {
         max_connections,
         service_name,
         metrics_interval_secs,
+        metrics_socket_path,
     });
 
     let mut metadatas: Vec<Metadata> = Vec::new();
