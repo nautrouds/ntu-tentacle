@@ -35,6 +35,7 @@ pub struct Config {
     pub base_dir: PathBuf,
     pub max_connections: usize,
     pub metrics_interval_secs: u64,
+    pub metrics_socket_path: Option<PathBuf>,
 }
 
 pub mod env;

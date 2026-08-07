@@ -46,6 +46,12 @@ pub fn load() -> Result<Config> {
         .and_then(|v| v.parse().ok())
         .unwrap_or(15);
 
+    let metrics_socket_path: Option<PathBuf> = match env::var("NAUTROUDS_METRICS_SOCKET") {
+        Ok(v) if v == "-" => None,
+        Ok(v) if !v.is_empty() => Some(base_dir.join(v)),
+        _ => Some(base_dir.join("metrics.sock")),
+    };
+
     let target_addr_env_keys = ["NAUTROUDS_TARGET_ADDR", "TARGET_ADDR", "TARGET", "ADDR"];
 
     let target_addrs_raw = target_addr_env_keys
@@ -69,5 +75,6 @@ pub fn load() -> Result<Config> {
         base_dir,
         max_connections,
         metrics_interval_secs,
+        metrics_socket_path,
     })
 }
